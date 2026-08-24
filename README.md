@@ -6,12 +6,11 @@
 
 ## Le problème métier
 
-<!-- À RÉÉCRIRE AVEC TES MOTS — c'est la première chose que lit un recruteur.
-     Trame : une chaîne hôtelière fictive encaisse des réservations dans une base
-     transactionnelle. Les analystes ont besoin de répondre à des questions
-     historiques ("quel était le niveau de fidélité du client AU MOMENT de la
-     réservation ?") que la base de production ne sait pas restituer, parce
-     qu'elle est écrasée en permanence. -->
+Le directeur commercial d'une chaîne hôtelière demande un chiffre simple : le taux d'annulation par segment de clientèle. L'analyste le lui fournit, et il est faux.
+
+Il est faux parce que la base transactionnelle est conçue pour l'écriture, pas pour la mémoire. Le statut de fidélité d'un client est écrasé à chaque promotion, si bien qu'une réservation faite en mars par un client « standard » apparaît aujourd'hui comme une réservation « gold ». Les réservations supprimées sortent purement des statistiques. Et une réservation confirmée puis annulée le même jour est comptée comme une simple annulation, ce qui masque exactement le cas qui intéresse le directeur : les clients qui se rétractent après s'être engagés.
+
+Aucune alerte ne se déclenche, aucun pipeline n'échoue. Le chiffre est simplement plausible et faux. Ce projet s'attaque à cette cause.
 
 ## Le modèle source (OLTP)
 
