@@ -1,0 +1,13 @@
+.env
+*.parquet
+data/
+state/
+__pycache__/
+.venv/
+*.json
+!package.json
+!**/schemas/*.json
+.terraform/
+*.tfstate*
+logs/
+.DS_Store
