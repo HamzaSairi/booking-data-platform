@@ -24,3 +24,57 @@ volumes, permissions de fichiers), et une consommation mémoire notable une fois
 Airflow et Redpanda ajoutés.
 
 **Date** : 2026-08-24
+
+## ADR-002 — Pas de clé étrangère entre payments et bookings
+
+**Contexte** : dans une architecture réaliste, l'encaissement est géré par un
+service distinct de la réservation, souvent avec sa propre base. La contrainte
+d'intégrité référentielle n'existe alors pas au niveau du SGBD.
+
+**Options** :
+(a) `booking_id BIGINT REFERENCES bookings(booking_id)` — intégrité garantie
+(b) `booking_id BIGINT NOT NULL` sans contrainte — couplage faible simulé
+(c) FK avec `ON DELETE SET NULL`
+
+**Décision** : (b).
+
+**Raison** : le projet doit produire des défauts de qualité réalistes, pas une
+base parfaite. L'option (a) rend structurellement impossible l'existence d'un
+paiement orphelin, donc supprime le problème au lieu de savoir le détecter.
+Avec (b), le simulateur pourra en injecter, et le Jour 20 les comptera dans une
+table dédiée plutôt que de les masquer.
+
+**Coût assumé** : la source ne garantit plus l'intégrité référentielle. C'est
+au pipeline de la mesurer, et à moi de documenter le taux d'orphelins constaté.
+Un jointure naïve dans les marts perdrait ces lignes silencieusement.
+
+**Date** : 2026-08-25
+
+## ADR-003 — REPLICA IDENTITY FULL sur les quatre tables
+
+**Contexte** : en réplication logique, Postgres écrit toujours la nouvelle
+version d'une ligne dans le WAL, mais l'ancienne dépend de la REPLICA IDENTITY
+de la table. En mode DEFAULT, seule la clé primaire est journalisée.
+
+**Options** :
+(a) DEFAULT — `before` réduit à la PK sur les DELETE, `null` sur les UPDATE
+(b) FULL — ligne complète avant modification
+(c) USING INDEX sur un index unique restreint — compromis
+
+**Décision** : (b) FULL.
+
+**Raison** : deux démonstrations du projet en dépendent. Au Jour 23, observer un
+`op='d'` avec son `before` renseigné. Au Jour 19, montrer la transition d'un
+client de `standard` à `gold`. En DEFAULT, je saurais qu'un changement a eu lieu
+sans savoir lequel — la moitié de la valeur du CDC disparaît.
+
+**Coût assumé** : chaque UPDATE écrit l'ancienne ligne entière dans le WAL, donc
+le volume de journal augmente. Négligeable à mon échelle (2000 réservations).
+Sur une table de plusieurs millions de lignes fortement mise à jour, ce choix
+serait discutable : on préférerait (c), ou on reconstituerait le `before` côté
+entrepôt à partir de la version précédente.
+
+**À vérifier** : mesurer le volume de WAL généré au Jour 22, une fois le
+connecteur Debezium en place.
+
+**Date** : 2026-08-25

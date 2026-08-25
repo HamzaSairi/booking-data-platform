@@ -103,4 +103,14 @@ CREATE INDEX idx_bookings_hotel_id    ON bookings (hotel_id);
 CREATE INDEX idx_bookings_status      ON bookings (status);
 CREATE INDEX idx_payments_booking_id  ON payments (booking_id);
 
+-- ---------------------------------------------------------------
+-- REPLICA IDENTITY FULL : le WAL logique conservera la ligne complète
+-- avant modification. Indispensable au `before` de Debezium (Jour 23).
+-- Coût assumé : volume de WAL accru. Voir ADR-002bis.
+-- ---------------------------------------------------------------
+ALTER TABLE hotels    REPLICA IDENTITY FULL;
+ALTER TABLE customers REPLICA IDENTITY FULL;
+ALTER TABLE bookings  REPLICA IDENTITY FULL;
+ALTER TABLE payments  REPLICA IDENTITY FULL;
+
 COMMIT;
