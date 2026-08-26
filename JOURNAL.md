@@ -35,7 +35,7 @@
 
 -
 ## Jour 2 — Postgres et modélisation transactionnelle
-**Date** : 2026-08-25 · **Temps passé** : ~3 h
+**Date** : 2026-08-25 · **Temps passé** : ~2 h
 
 ### Fait
 - docker-compose.yml : Postgres 16, wal_level=logical, healthcheck, volume nommé
@@ -67,3 +67,49 @@
   mon échelle ? À mesurer au Jour 22 avec pg_stat_replication.
 - Faut-il un index composite (status, updated_at) sur bookings, ou les deux
   index séparés suffisent-ils ? À trancher quand j'aurai des volumes réels.
+
+  ## Jour 3 — Simulateur, partie 1
+
+### Fait
+- venv créé (oublié en fin de Jour 2), dépendances installées :
+  psycopg 3.3.4, faker, click, python-dotenv → simulator/requirements.txt
+- simulator/generate.py : squelette complet, connect(), utilitaires de date,
+  insert_hotels() opérationnelle, CLI click avec seed --truncate
+- 50 hôtels insérés, distribution des étoiles pondérée vers 3★
+
+### Appris
+- psycopg 3 : autocommit=False par défaut, le `with conn:` commite à la sortie.
+  Une seule transaction pour tout le seed → soit tout existe, soit rien.
+- executemany(..., returning=True) produit UN jeu de résultats PAR LIGNE, d'où
+  la boucle sur nextset(). Sans elle on ne récupère que le premier id, et les
+  2000 réservations pointeraient toutes vers le même hôtel.
+- os.environ[...] plutôt que os.getenv(...) : échouer tôt et bruyamment sur une
+  variable manquante, au lieu d'un None qui produit une erreur incompréhensible
+  trois couches plus bas.
+- make_conninfo() plutôt qu'une URL concaténée : gère l'échappement, et évite
+  de dupliquer le mot de passe déjà présent dans les POSTGRES_* du .env.
+
+### Temps perdu / frictions
+- `source .venv/bin/activate` → No such file. Le venv n'avait jamais été créé.
+  Réflexe acquis : le prompt DOIT commencer par (.venv), c'est le seul
+  indicateur fiable.
+- `Connection refused` sur 127.0.0.1:5432 : le conteneur Postgres ne tournait
+  plus après redémarrage de la machine. Trois erreurs à ne pas confondre —
+  Connection refused = rien n'écoute (serveur absent) ; authentication failed
+  = serveur présent, identifiants faux ; timeout = réseau ou mauvais hôte.
+  → à reprendre dans docs/runbook.md au Jour 14.
+- Rituel d'ouverture désormais fixé : docker compose up -d, puis
+  source .venv/bin/activate, puis code .
+
+### À anticiper
+- POSTGRES_HOST=localhost ne vaut que tant que le script tourne sur l'hôte.
+  Au Jour 12, Airflow exécutera ce code DEPUIS un conteneur : localhost
+  désignera le conteneur Airflow lui-même. La valeur devra devenir `postgres`,
+  le nom du service Compose.
+- Les hôtels ont un created_at sur 2 ans, les réservations seront sur 90 jours :
+  une dimension doit toujours précéder les faits qui la référencent.
+
+### Questions ouvertes
+- Faut-il seeder les payments dès le Jour 3 (base propre) ou tout laisser au
+  Jour 4 avec les défauts ? Tranché pour le Jour 3, à réévaluer si les tests
+  du Jour 20 manquent de matière.

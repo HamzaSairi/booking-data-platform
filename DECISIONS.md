@@ -78,3 +78,27 @@ entrepôt à partir de la version précédente.
 connecteur Debezium en place.
 
 **Date** : 2026-08-25
+
+## ADR-004 — Graine aléatoire fixe par défaut dans le simulateur
+
+**Contexte** : le simulateur génère hôtels, clients et réservations par tirage
+aléatoire. Deux exécutions produisent par défaut deux bases différentes.
+
+**Options** :
+(a) aléatoire pur, non reproductible
+(b) graine fixe en dur
+(c) graine fixe par défaut, surchargeable par --seed
+
+**Décision** : (c), valeur par défaut 42.
+
+**Raison** : le test de reproductibilité du Jour 5 (down -v puis reseed) n'a de
+sens que si la base reconstruite est identique. Les mesures d'octets scannés du
+Jour 28, avant et après partitionnement, ne sont comparables que sur le même
+jeu de données. Et les captures d'écran du README resteraient cohérentes.
+
+**Coût assumé** : un jeu figé ne révèle jamais les bugs qui n'apparaissent que
+sur certaines valeurs — un nom contenant une apostrophe, un montant à zéro.
+D'où l'option --seed conservée : lancer périodiquement avec une autre graine
+est un test à part entière.
+
+**Date** : 2026-08-26
