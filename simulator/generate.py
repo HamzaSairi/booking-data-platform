@@ -4,10 +4,13 @@ Commandes :
     seed      — peuple la base avec un jeu de données initial cohérent
     simulate  — (Jour 4) fait vivre la base : modifications, défauts
 """
+import json
 import os
 import random
+import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import click
 import psycopg
@@ -16,6 +19,7 @@ from faker import Faker
 from psycopg import conninfo
 
 load_dotenv()
+
 
 # ─── Constantes ──────────────────────────────────────────────────────
 CITIES = [
@@ -26,6 +30,8 @@ CITIES = [
     ("Berlin", "DE"), ("Munchen", "DE"), ("Wien", "AT"),
     ("Bruxelles", "BE"), ("Geneve", "CH"), ("Praha", "CZ"), ("Athina", "GR"),
 ]
+LOG_PATH = Path("state/simulation_log.jsonl")
+TIER_UP = {"standard": "silver", "silver": "gold"}
 
 HOTEL_PREFIXES = ["Hotel", "Grand Hotel", "Residence", "Auberge", "Villa"]
 
@@ -208,6 +214,153 @@ def insert_payments(cur, bookings) -> int:
     return len(rows)
 
 
+def complete_past_stays(cur) -> int:
+    """Fait VIEILLIR la base : un sejour termine ne reste pas 'confirmed'.
+
+    Transition purement temporelle, declenchee par le calendrier et non par
+    une action utilisateur. Sans elle, une base seedee le lundi devient
+    incoherente le jeudi — et le test test_statut_coherent_avec_les_dates
+    echoue, ce qui est le comportement attendu.
+    """
+    rows = cur.execute("""
+        SELECT booking_id, status FROM bookings
+        WHERE check_out < CURRENT_DATE AND status IN ('pending', 'confirmed')
+    """).fetchall()
+
+    for bid, status in rows:
+        # Un 'pending' dont le sejour est passe n'a jamais ete honore.
+        new = "completed" if status == "confirmed" else "cancelled"
+        cur.execute(
+            "UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid)
+        )
+        log_event("status_change", booking_id=bid, old=status, to=new,
+                  reason="stay_elapsed")
+    return len(rows)
+
+    # ─── Journal de simulation ───────────────────────────────────────────
+def log_event(kind: str, **fields) -> None:
+    """Trace ce que le simulateur a REELLEMENT fait.
+
+    La source ne garde que l'etat final d'une ligne : sans ce fichier,
+    impossible de chiffrer au Jour 10 ce que le batch a rate.
+    """
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    event = {"ts": now_utc().isoformat(), "kind": kind, **fields}
+    with LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event, default=str) + "\n")
+
+
+# ─── Mutations ───────────────────────────────────────────────────────
+def load_dimensions(cur):
+    """Recharge hotels et clients depuis la base (simulate n'a pas seede)."""
+    hotels = cur.execute("SELECT hotel_id, stars FROM hotels").fetchall()
+    customers = cur.execute(
+        "SELECT customer_id, created_at, loyalty_tier FROM customers"
+    ).fetchall()
+    return hotels, customers
+
+
+def complete_past_stays(cur) -> int:
+    """Fait VIEILLIR la base : un sejour termine ne reste pas 'confirmed'.
+
+    Transition declenchee par le calendrier, non par une action utilisateur.
+    Sans elle, une base seedee lundi devient incoherente jeudi.
+    """
+    rows = cur.execute("""
+        SELECT booking_id, status FROM bookings
+        WHERE check_out < CURRENT_DATE AND status IN ('pending', 'confirmed')
+    """).fetchall()
+
+    for bid, status in rows:
+        # Un 'pending' dont le sejour est passe n'a jamais ete honore.
+        new = "completed" if status == "confirmed" else "cancelled"
+        cur.execute(
+            "UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid)
+        )
+        log_event("status_change", booking_id=bid, old=status, to=new,
+                  reason="stay_elapsed")
+    return len(rows)
+
+
+def advance_statuses(cur, n: int) -> int:
+    """pending -> confirmed (80 %) ou cancelled (20 %).
+
+    Dans 15 % des cas, un SECOND changement suit immediatement : c'est
+    l'etat intermediaire que l'extraction incrementale ne verra jamais.
+    """
+    rows = cur.execute(
+        "SELECT booking_id FROM bookings WHERE status = 'pending' "
+        "ORDER BY random() LIMIT %s",
+        (n,),
+    ).fetchall()
+
+    for (bid,) in rows:
+        new = random.choices(["confirmed", "cancelled"], weights=[80, 20])[0]
+        cur.execute(
+            "UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid)
+        )
+        log_event("status_change", booking_id=bid, to=new)
+
+        if new == "confirmed" and random.random() < 0.15:
+            cur.execute(
+                "UPDATE bookings SET status = 'cancelled' WHERE booking_id = %s",
+                (bid,),
+            )
+            log_event("status_change", booking_id=bid, to="cancelled",
+                      intermediate=True)
+    return len(rows)
+
+
+def mutate_customers(cur, n: int) -> int:
+    """Modifie email ou loyalty_tier — la matiere premiere du SCD2 (Jour 19)."""
+    rows = cur.execute(
+        "SELECT customer_id, loyalty_tier FROM customers "
+        "ORDER BY random() LIMIT %s",
+        (n,),
+    ).fetchall()
+
+    for cid, tier in rows:
+        if random.random() < 0.7 and tier in TIER_UP:
+            cur.execute(
+                "UPDATE customers SET loyalty_tier = %s WHERE customer_id = %s",
+                (TIER_UP[tier], cid),
+            )
+            log_event("tier_change", customer_id=cid,
+                      old=tier, new=TIER_UP[tier])
+        else:
+            cur.execute(
+                "UPDATE customers SET email = split_part(email, '@', 1) "
+                "|| '+' || %s || '@example.com' WHERE customer_id = %s",
+                (random.randint(100, 999), cid),
+            )
+            log_event("email_change", customer_id=cid)
+    return len(rows)
+
+
+def delete_old_pending(cur, pct: float = 0.01) -> int:
+    """Suppression PHYSIQUE de vieilles reservations pending.
+
+    Aucun updated_at ne bouge, aucune trace ne subsiste : l'extraction
+    incrementale du Jour 7 ne peut structurellement pas la detecter.
+    C'est le defaut qui justifiera le CDC au sprint 5.
+    """
+    rows = cur.execute(
+        "SELECT booking_id FROM bookings "
+        "WHERE status = 'pending' AND created_at < now() - interval '20 days'"
+    ).fetchall()
+    if not rows:
+        return 0
+
+        # Tirage de Bernoulli par ligne plutot qu'un arrondi sur l'effectif :
+    # sur de petits volumes, round(30 * 0.01) = 0 et un max(1, ...) transforme
+    # une probabilite de 1 % en certitude. Ici le taux est respecte en moyenne.
+    victims = [bid for (bid,) in rows if random.random() < pct]
+    for bid in victims:
+        cur.execute("DELETE FROM bookings WHERE booking_id = %s", (bid,))
+        log_event("hard_delete", booking_id=bid)
+    return len(victims)
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────
 @click.group()
 def cli() -> None:
@@ -230,6 +383,14 @@ def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
     Faker.seed(rng_seed)
     faker = Faker("fr_FR")
 
+    with conn.transaction(), conn.cursor() as cur:
+                hotels, customers = load_dimensions(cur)
+
+                n_aged = complete_past_stays(cur)          # ← ajout
+
+                new = insert_bookings(cur, hotels, customers,
+                                      random.randint(3, 8), days=0)
+
     with connect() as conn, conn.cursor() as cur:
         if truncate:
             cur.execute(
@@ -247,13 +408,55 @@ def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
         hotels = insert_hotels(cur, faker, n_hotels)
         click.echo(f"{len(hotels):>6} hotels")
 
-        # A DECOMMENTER au fur et a mesure :
         customers = insert_customers(cur, faker, n_customers)
         click.echo(f"{len(customers):>6} clients")
+
         bookings = insert_bookings(cur, hotels, customers, n_bookings, days)
         click.echo(f"{len(bookings):>6} reservations")
+
         n_pay = insert_payments(cur, bookings)
         click.echo(f"{n_pay:>6} paiements")
+
+
+@cli.command()
+@click.option("--minutes", default=5, show_default=True)
+@click.option("--defect-rate", default=0.05, show_default=True)
+@click.option("--interval", default=10, show_default=True)
+@click.option("--seed", "rng_seed", default=None, type=int)
+def simulate(minutes, defect_rate, interval, rng_seed):
+    """Fait vivre la base : creations, transitions, modifications, suppressions."""
+    if rng_seed is not None:
+        random.seed(rng_seed)
+        Faker.seed(rng_seed)
+
+    deadline = time.monotonic() + minutes * 60
+    tour = 0
+
+    with connect() as conn:
+        while time.monotonic() < deadline:
+            tour += 1
+            with conn.transaction(), conn.cursor() as cur:
+                hotels, customers = load_dimensions(cur)
+                n_aged = complete_past_stays(cur)
+
+                new = insert_bookings(cur, hotels, customers,
+                                      random.randint(3, 8), days=0)
+                n_pay = insert_payments(cur, new)
+                for bid, *_ in new:
+                    log_event("insert_booking", booking_id=bid)
+
+                n_status = advance_statuses(cur, random.randint(5, 15))
+                n_cust = mutate_customers(cur, random.randint(2, 6))
+                n_del = delete_old_pending(cur)
+
+            click.echo(
+                f"tour {tour:>3} | ^{n_aged} vieillie  +{len(new)} resa  "
+                f"+{n_pay} paiement  ~{n_status} statut  ~{n_cust} client  "
+                f"-{n_del} supprimee"
+            )
+            time.sleep(interval)
+
+    click.echo(f"\nTermine. Journal : {LOG_PATH}")
 
 
 if __name__ == "__main__":
