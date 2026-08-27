@@ -113,3 +113,41 @@
 - Faut-il seeder les payments dès le Jour 3 (base propre) ou tout laisser au
   Jour 4 avec les défauts ? Tranché pour le Jour 3, à réévaluer si les tests
   du Jour 20 manquent de matière.
+
+
+## Jour 4 — Simulateur, partie 2 : activité et défauts
+
+### Fait
+- commande simulate : vieillissement, créations, transitions, mutations
+  de clients, suppressions physiques, injection de 7 défauts documentés
+- state/simulation_log.jsonl : vérité terrain, sans laquelle le chiffrage
+  du Jour 10 serait impossible (la source ne garde que l'état final)
+- test binaire converti en test à seuil (< 2 %)
+
+### Appris
+- J'ai choisi les défauts APRÈS avoir inventorié les contraintes du schéma,
+  pas avant. Quatre étaient structurellement impossibles (CHECK) — je ne les
+  ai pas retirés : un CHECK en source est une garantie dont le pipeline peut
+  dépendre. Les tests correspondants seront quand même écrits, pour détecter
+  le jour où quelqu'un supprimerait la contrainte.
+- CHECK (total_amount >= 0) autorise 0, qui n'a aucun sens métier. Règle
+  technique ≠ règle métier : la première est dans le SGBD, la seconde doit
+  être dans les tests dbt.
+- Aucun index unique sur customers.email — je croyais l'avoir déclaré.
+  Les tests d'unicité ne doivent jamais se fier au schéma.
+- Un test de donnée n'est pas déterministe : test_statut_coherent a échoué
+  du jour au lendemain sans qu'une ligne de code change. Le monde avait bougé.
+
+### Temps perdu / frictions
+- Fonction définie deux fois : Python n'émet aucun avertissement, la dernière
+  écrase la première. ruff le détecte (F811). Réflexe : quand ruff signale des
+  F821/F811, corriger AVANT de lancer le script.
+- Fins de ligne CRLF héritées de Windows → .gitattributes avec eol=lf.
+- Déséquilibre production/consommation : advance_statuses vidait le stock de
+  'pending' plus vite qu'il ne se reconstituait. Un simulateur a des flux à
+  équilibrer, comme une file d'attente réelle.
+
+### Chiffres à retenir pour le Jour 10
+- ~10 % des changements de statut passent par un état intermédiaire
+  qu'aucune extraction incrémentale ne peut voir.
+- Les suppressions physiques ne laissent aucune trace en base.

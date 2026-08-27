@@ -102,3 +102,57 @@ D'où l'option --seed conservée : lancer périodiquement avec une autre graine
 est un test à part entière.
 
 **Date** : 2026-08-26
+
+## ADR-005 — Défauts de qualité injectés par le simulateur
+
+**Contexte** : le projet doit démontrer une capacité à détecter et traiter des
+problèmes de qualité. Une base parfaite ne prouve rien. Il faut donc des
+défauts, mais choisis — pas du bruit aléatoire.
+
+**Options** :
+(a) aucun défaut, base propre
+(b) défauts aléatoires non documentés
+(c) un défaut par dimension de la qualité, documenté et journalisé
+(d) (c) + retrait des CHECK du schéma pour couvrir toutes les dimensions
+
+**Décision** : (c).
+
+**Raison** : chaque défaut injecté doit correspondre à un test précis du
+Jour 20 ; l'inverse — écrire des tests puis chercher quoi tester — produit des
+tests décoratifs. L'inventaire des contraintes du schéma a servi de filtre :
+
+| Défaut | Dimension | Détecté au |
+|---|---|---|
+| Paiement orphelin | intégrité référentielle | J20, table dédiée |
+| Encaissement > montant réservé | cohérence | J20, test singulier |
+| Doublon de paiement | unicité | J17, dédup ROW_NUMBER |
+| Email dupliqué | unicité | J20, test `unique` |
+| Devise non normalisée | validité | J17, normalisation staging |
+| Montant à zéro | exactitude | J20, règle métier (> 0) |
+| Réservation + client tardifs | complétude / fraîcheur | J13, backfill |
+
+Deux constats issus de cet inventaire. Il n'existe aucun index unique sur
+`customers.email` : les tests d'unicité ne peuvent donc pas se reposer sur le
+schéma. Et `CHECK (total_amount >= 0)` autorise la valeur 0, qui n'a aucun sens
+métier — la règle technique et la règle métier ne coïncident pas, la seconde
+doit vivre dans les tests dbt.
+
+L'option (d) est écartée : un CHECK en source est une garantie sur laquelle le
+pipeline peut s'appuyer. Le retirer pour se donner du travail serait un
+contresens. Quatre défauts sont donc structurellement impossibles ici
+(montant négatif, dates inversées, statut inconnu, réservation orpheline) —
+les tests correspondants seront quand même écrits, pour détecter le jour où
+quelqu'un supprimerait la contrainte.
+
+**Conséquence sur les tests** : `test_aucune_reservation_avant_son_client` est
+devenu un test à seuil (< 2 %) plutôt qu'un absolu. Une donnée de production
+n'est jamais parfaite ; ce qu'on surveille est le taux et sa dérive.
+
+**Coût assumé** : les défauts sont injectés par un tirage indépendant par type
+et par tour, ce qui ne reproduit pas les corrélations du réel — un incident de
+production produit des défauts en rafale, pas un par un. Le fichier
+`state/simulation_log.jsonl` conserve la vérité terrain, faute de quoi le
+chiffrage du Jour 10 serait impossible : la source ne garde que l'état final
+d'une ligne.
+
+**Date** : 2026-08-27

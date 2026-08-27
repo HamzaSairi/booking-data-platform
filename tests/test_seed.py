@@ -16,14 +16,6 @@ def test_tables_peuplees(cur):
         assert n >= mini, f"{table} : {n} lignes"
 
 
-def test_aucune_reservation_avant_son_client(cur):
-    n = cur.execute("""
-        SELECT count(*) FROM bookings b
-        JOIN customers c USING (customer_id)
-        WHERE b.created_at < c.created_at
-    """).fetchone()[0]
-    assert n == 0
-
 
 def test_statut_coherent_avec_les_dates(cur):
     """Un sejour termine ne peut pas etre 'pending' ou 'confirmed'."""
@@ -51,3 +43,16 @@ def test_correlation_fidelite(cur):
         GROUP BY 1
     """).fetchall())
     assert rows["gold"] > rows["silver"] > rows["standard"]
+
+def test_reservations_anterieures_a_leur_client_restent_marginales(cur):
+    """Defaut n°7 de l'ADR-003 : dimension a arrivee tardive, injectee.
+
+    L'invariant reste vrai pour le chemin nominal ; ces anomalies sont
+    ATTENDUES et mesurees plutot qu'interdites. Le seuil detecterait une
+    derive : 2 % signalerait un bug du simulateur, pas une injection.
+    """
+    n, total = cur.execute("""
+        SELECT count(*) FILTER (WHERE b.created_at < c.created_at), count(*)
+        FROM bookings b JOIN customers c USING (customer_id)
+    """).fetchone()
+    assert n / total < 0.02, f"{n}/{total} reservations anterieures a leur client"
