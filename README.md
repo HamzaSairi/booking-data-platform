@@ -56,10 +56,38 @@ Aucune alerte ne se déclenche, aucun pipeline n'échoue. Le chiffre est simplem
   Orchestration : Airflow (DAG quotidien, backfill idempotent)
   Infra as code : Terraform    CI : GitHub Actions
 ```
+   SOURCE OLTP              INGESTION            ENTREPOT           SERVICE
+
+  +--------------+
+  |  PostgreSQL  |  ==[batch]==>  extract  ==>  raw_booking
+  |   16 (WAL    |                watermark      (partitionne)
+  |   logical)   |                 J7-J9              |
+  |              |                                    v
+  |  4 tables    |                              staging_booking
+  |  + triggers  |                                dbt / vues
+  +--------------+                                    |
+         ^                                            v
+         |                                      marts_booking
+  +--------------+                             faits + dimensions
+  |  simulateur  |                              SCD2 (J19)
+  |   Python     |                                    |
+  |  seed /      |                                    v
+  |  simulate    |                            .. Looker Studio (J29)
+  +--------------+
+
+  .. Debezium -> Redpanda -> consumer  (sprint 5, J21-J25)
+  .. Airflow orchestre l'ensemble      (sprint 3, J11-J15)
+  .. Terraform + GitHub Actions        (sprint 6, J26-J27)
 
 ## Lancer le projet
 
-<!-- À compléter au fil des sprints. -->
+Prérequis : Docker, Python 3.11+, `make`.
+
+```bash
+cp .env.example .env    # renseigner POSTGRES_PASSWORD
+make check              # démarre, peuple, teste
+make simulate           # fait vivre la base
+```
 
 ## Décisions d'architecture
 

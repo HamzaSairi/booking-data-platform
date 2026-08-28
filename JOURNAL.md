@@ -151,3 +151,33 @@
 - ~10 % des changements de statut passent par un état intermédiaire
   qu'aucune extraction incrémentale ne peut voir.
 - Les suppressions physiques ne laissent aucune trace en base.
+
+## Rétrospective sprint 1 — 2026-08-28
+
+**Objectif du sprint** : une base métier réaliste tourne en local et génère de
+l'activité avec des défauts contrôlés. → Atteint.
+
+**Ce qui a marché**
+- Écrire le .gitignore avant tout le reste : aucun secret n'a jamais approché
+  l'index Git.
+- Les tests écrits au Jour 3, avant le simulateur du Jour 4. Ils ont attrapé
+  deux bugs que je n'aurais pas vus (distribution des paliers, statuts périmés).
+
+**Ce qui a coûté du temps**
+- Indentation et fins de ligne CRLF : ~1 h perdue au Jour 4. Corrigé par
+  .gitattributes + ruff. Le vrai coût était de ne pas avoir lancé ruff dès
+  le premier fichier.
+- Déséquilibre production/consommation dans simulate : le stock de bookings
+  'pending' s'épuisait. Un simulateur doit respecter un régime stationnaire.
+
+**Ce que j'ai compris et que je n'avais pas anticipé**
+- Un test de donnée n'est pas déterministe comme un test de code : le mien est
+  passé le 26 et a échoué le 27 sans qu'une ligne change. Le monde avait bougé.
+- L'état hors conteneur (state/) survit à `docker compose down -v`. Toute
+  remise à zéro doit couvrir les deux, sinon le reset est partiel et silencieux.
+
+**Dette assumée pour le sprint 2**
+- [à compléter]
+
+**Pour le sprint 2** : le watermark du Jour 7 est exactement le même piège que
+state/. La cible `reset` le couvre déjà.
