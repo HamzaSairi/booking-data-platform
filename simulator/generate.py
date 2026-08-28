@@ -600,6 +600,18 @@ def simulate(minutes, defect_rate, interval, rng_seed) -> None:
 
     click.echo(f"\nTermine. Journal : {LOG_PATH}")
 
+@cli.command()
+def age():
+    """Cloture les sejours dont la date est passee.
+
+    Traitement de calendrier, distinct de l'activite utilisateur : dans un
+    vrai systeme ce serait un job nocturne. Idempotent — deux executions
+    consecutives font zero ligne a la seconde.
+    """
+    with connect() as conn:
+        with conn.transaction(), conn.cursor() as cur:
+            n = complete_past_stays(cur)
+    click.echo(f"{n} sejour(s) cloture(s).")
 
 if __name__ == "__main__":
     cli()
