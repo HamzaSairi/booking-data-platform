@@ -17,8 +17,7 @@
   `docker`, et surtout redémarrer WSL entièrement (`wsl --shutdown` depuis
   Windows) — fermer le terminal ne suffit pas, l'appartenance à un groupe est
   fixée à la connexion.
-- Confusion PowerShell / Ubuntu : `wsl` est une commande Windows, `groups` une
-  commande Linux. Réflexe à prendre : lire le prompt avant de taper.
+
 - `git remote remove origin` alors que `gh repo create` avait déjà réussi —
   j'ai corrigé une erreur sans lire toute la sortie du terminal.
 
@@ -176,8 +175,6 @@ l'activité avec des défauts contrôlés. → Atteint.
 - L'état hors conteneur (state/) survit à `docker compose down -v`. Toute
   remise à zéro doit couvrir les deux, sinon le reset est partiel et silencieux.
 
-**Dette assumée pour le sprint 2**
-- [à compléter]
 
 **Pour le sprint 2** : le watermark du Jour 7 est exactement le même piège que
 state/. La cible `reset` le couvre déjà.

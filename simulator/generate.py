@@ -556,6 +556,29 @@ def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
               help="Secondes entre deux tours de boucle.")
 @click.option("--seed", "rng_seed", default=None, type=int,
               help="Graine. Par defaut aleatoire : on veut de la variete.")
+
+def expire_past_stays(cur) -> dict[str, int]:
+    """Fait vieillir la base : du temps a passé depuis le dernier lancement.
+
+    Invariant : aucun séjour dont le check_out est passé ne reste
+    en 'pending' ou 'confirmed'.
+    """
+    # Séjour honoré : le client est venu, le séjour est terminé.
+    cur.execute("""
+        UPDATE bookings SET status = 'completed'
+        WHERE status = 'confirmed' AND check_out < CURRENT_DATE
+    """)
+    completed = cur.rowcount
+
+    # Jamais confirmé et la date est passée : réservation abandonnée.
+    cur.execute("""
+        UPDATE bookings SET status = 'cancelled'
+        WHERE status = 'pending' AND check_out < CURRENT_DATE
+    """)
+    cancelled = cur.rowcount
+
+    return {"completed": completed, "cancelled": cancelled}
+
 def simulate(minutes, defect_rate, interval, rng_seed) -> None:
     """Fait vivre la base : creations, transitions, modifications, suppressions."""
     if rng_seed is not None:
@@ -600,18 +623,19 @@ def simulate(minutes, defect_rate, interval, rng_seed) -> None:
 
     click.echo(f"\nTermine. Journal : {LOG_PATH}")
 
+
 @cli.command()
 def age():
-    """Cloture les sejours dont la date est passee.
-
-    Traitement de calendrier, distinct de l'activite utilisateur : dans un
-    vrai systeme ce serait un job nocturne. Idempotent — deux executions
-    consecutives font zero ligne a la seconde.
-    """
-    with connect() as conn:
-        with conn.transaction(), conn.cursor() as cur:
-            n = complete_past_stays(cur)
-    click.echo(f"{n} sejour(s) cloture(s).")
+    """Applique le passage du temps sans générer de nouvelle activité."""
+    with psycopg.connect(
+        host=os.environ["POSTGRES_HOST"],
+        port=os.environ["POSTGRES_PORT"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+        dbname=os.environ["POSTGRES_DB"],
+    ) as conn:
+        with conn.cursor() as cur:
+            print(expire_past_stays(cur))
 
 if __name__ == "__main__":
     cli()
