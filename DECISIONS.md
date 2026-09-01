@@ -156,3 +156,58 @@ chiffrage du Jour 10 serait impossible : la source ne garde que l'état final
 d'une ligne.
 
 **Date** : 2026-08-27
+
+## ADR-006 — Région EU pour les datasets BigQuery
+**Contexte** : trois datasets à créer (raw, staging, marts) qui seront joints
+entre eux par dbt à partir du jour 17.
+**Options** : (a) US multi-région (défaut de `bq`), (b) EU multi-région,
+(c) une région unique type europe-west9.
+**Décision** : (b) EU.
+**Raison** : les données simulent des réservations de clients européens, donc
+le RGPD est l'argument métier. La vraie contrainte est technique : BigQuery
+refuse de joindre deux datasets situés dans des régions différentes, et un
+dataset ne se déplace pas après création. Oublier `--location=EU` sur un seul
+des trois aurait cassé le premier `ref()` dbt avec un message peu explicite.
+Le multi-région plutôt qu'une région unique pour la disponibilité, à coût
+identique à ce volume.
+**Coût** : décision irréversible. Toute source externe future devra être en EU.
+**Date** : 2026-09-01
+
+## ADR-007 — Clé de service account plutôt que credentials applicatives par défaut
+**Contexte** : authentifier les scripts d'ingestion auprès de BigQuery.
+**Options** : (a) `gcloud auth application-default login`, (b) clé JSON de
+service account, (c) Workload Identity Federation.
+**Décision** : (b).
+**Raison** : Google déconseille les clés de service account en général, et à
+juste titre — c'est un secret de longue durée sans expiration. Mais au jour 11
+Airflow tournera dans un conteneur qui n'a pas accès à `~/.config/gcloud`, et
+au jour 27 la CI n'a pas de session interactive. Un fichier montable est le
+seul mécanisme commun aux trois environnements. (c) serait le bon choix en
+production mais suppose une infrastructure d'identité que ce projet n'a pas.
+**Coût** : secret de longue durée, stocké hors du dépôt dans ~/.gcp (chmod 600),
+rotation manuelle. À reconsidérer si le projet passait sur une VM GCP, où le
+service account attaché rendrait la clé inutile.
+**Date** : 2026-09-01
+
+## ADR-008 — Bac à sable BigQuery, faute de compte de facturation
+**Contexte** : le plan prévoit une alerte budget à 5 €. Les trois comptes de
+facturation disponibles sur ce compte Google sont clôturés (`OPEN=False`) et
+l'essai gratuit n'est pas réattribuable.
+**Options** : (a) créer un compte de facturation avec carte bancaire,
+(b) utiliser le bac à sable BigQuery, (c) changer de fournisseur cloud.
+**Décision** : (b), avec (a) en recours si une contrainte bloque.
+**Raison** : le volume du projet (quelques centaines de Mo, chargements batch
+gratuits) tient largement dans le niveau gratuit. Le bac à sable donne 10 Go de
+stockage et 1 To de requêtes par mois sans carte.
+**Conséquences acceptées** :
+- expiration automatique des tables à 60 jours — le projet dure six semaines,
+  mais les captures d'écran de la vitrine devront être prises avant la fin ;
+- aucune alerte budget possible ;
+- pas de streaming inserts. Sans impact : le jour 24 prévoit déjà des
+  micro-batchs par load jobs. Ne pas dériver vers `insert_rows_json`.
+**Parade sur les coûts** : `maximum_bytes_billed` à 10 Gio dans
+`ingestion/bq.py`, appliqué à toute requête. Une alerte budget notifie après
+coup ; le plafond fait échouer le job avant exécution. C'est le garde-fou le
+plus fort des deux.
+**À revoir** : jour 26, si Terraform exige un compte de facturation actif.
+**Date** : 2026-09-01

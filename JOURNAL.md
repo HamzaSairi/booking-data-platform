@@ -178,3 +178,55 @@ l'activité avec des défauts contrôlés. → Atteint.
 
 **Pour le sprint 2** : le watermark du Jour 7 est exactement le même piège que
 state/. La cible `reset` le couvre déjà.
+
+## Jour 6 — GCP, BigQuery, sécurité
+
+### Un test vert devenu rouge sans le moindre commit
+
+`pytest` a échoué au lancement du jour sur `test_statut_coherent_avec_les_dates` :
+76 réservations avec un `check_out` passé encore en `pending` ou `confirmed`.
+Aucun code n'avait changé depuis le jour 5.
+
+Diagnostic en trois requêtes. `completed` existait bien et représentait 1098
+lignes : pas de bug de génération. `count(*) FILTER (WHERE updated_at >
+created_at)` valait 0 sur les 76 : aucune n'avait été touchée par `simulate`.
+Les `check_out` s'étalaient du 28 au 31 août alors que le seed datait du 27.
+
+Verdict : au moment du seed, ces lignes étaient parfaitement cohérentes. Quatre
+jours ont passé. Le calendrier a rendu les données fausses sans qu'une seule
+ligne de code s'exécute.
+
+Ce que j'en retiens : un invariant qui dépend de l'heure de son évaluation doit
+être **maintenu** par le système, pas établi une fois au seed. Corriger
+uniquement le seed aurait redonné du rouge trois jours plus tard. La règle
+appartient à `simulate`, pas à la génération initiale.
+
+C'est le même piège que `datetime.now()` dans une tâche Airflow au jour 13,
+rencontré cinq jours plus tôt et côté données au lieu du code. Et c'est ma
+réponse à la question 6 d'entretien : tester de la donnée, ce n'est pas tester
+du code, parce que le résultat peut changer sans que le code bouge.
+
+**Dette ouverte** : la commande `age` lève `psycopg.ProgrammingError: no result
+available`. Contournée par un UPDATE manuel en psql, donc les tests passent mais
+l'invariant n'est pas encore maintenu automatiquement. À reprendre à froid — le
+jour 10 en aura besoin pour provoquer du mouvement sans créer de volume.
+
+### GCP
+
+Projet `booking-data-platform-b7768d`, trois datasets en EU, service account
+avec exactement `bigquery.dataEditor` et `bigquery.jobUser`.
+
+Le moindre privilège vérifié par le comportement plutôt que par la console :
+`create_dataset` avec le service account renvoie un 403. C'est le résultat
+attendu — mon compte humain crée les datasets, le service account écrit dedans.
+
+Trois ADR écrits (région, mode d'authentification, bac à sable).
+
+### Frictions
+
+- Terminal PowerShell sur un chemin `\\wsl.localhost` : `source` inconnu, et le
+  venv Linux inutilisable depuis Windows. Corrigé en rouvrant le dossier via
+  *WSL: Reopen Folder in WSL*.
+- `$booking12` au lieu de `booking12` : le `$` ne se met qu'à la lecture d'une
+  variable. gcloud a reçu une chaîne vide. Réflexe pris : toujours `echo` une
+  variable avant de la passer à une commande qui crée quelque chose.
