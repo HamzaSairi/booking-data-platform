@@ -56,3 +56,7 @@ def test_reservations_anterieures_a_leur_client_restent_marginales(cur):
         FROM bookings b JOIN customers c USING (customer_id)
     """).fetchone()
     assert n / total < 0.02, f"{n}/{total} reservations anterieures a leur client"
+
+# tests/test_extract.py
+def test_seconde_extraction_ne_produit_presque_rien():
+    """At-least-once : un chevauchement borné est acceptable, une perte non."""

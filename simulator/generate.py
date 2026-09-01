@@ -223,13 +223,20 @@ def insert_payments(cur, bookings) -> int:
     for booking_id, status, amount, currency, created in bookings:
         if status not in ("confirmed", "completed"):
             continue          # on ne paie pas une reservation annulee
+
+        # paid_at est une date METIER : une capture differee de 48 h est
+        # plausible. created_at/updated_at sont des metadonnees TECHNIQUES :
+        # une ligne n'est jamais modifiee dans le futur, et un updated_at
+        # futur empoisonnerait le watermark du Jour 7.
         paid_at = created + timedelta(hours=random.uniform(0, 48))
+        tech = min(paid_at, now_utc())
+
         rows.append((booking_id, amount, currency,
                      random.choice(["card", "transfer", "paypal", "cash"]),
-                     "captured", paid_at, paid_at, paid_at))
+                     "captured", paid_at, tech, tech))
 
     if not rows:
-        return 0
+        return 0          # executemany sur une liste vide leve une erreur
 
     cur.executemany(
         """
@@ -557,27 +564,6 @@ def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
 @click.option("--seed", "rng_seed", default=None, type=int,
               help="Graine. Par defaut aleatoire : on veut de la variete.")
 
-def expire_past_stays(cur) -> dict[str, int]:
-    """Fait vieillir la base : du temps a passé depuis le dernier lancement.
-
-    Invariant : aucun séjour dont le check_out est passé ne reste
-    en 'pending' ou 'confirmed'.
-    """
-    # Séjour honoré : le client est venu, le séjour est terminé.
-    cur.execute("""
-        UPDATE bookings SET status = 'completed'
-        WHERE status = 'confirmed' AND check_out < CURRENT_DATE
-    """)
-    completed = cur.rowcount
-
-    # Jamais confirmé et la date est passée : réservation abandonnée.
-    cur.execute("""
-        UPDATE bookings SET status = 'cancelled'
-        WHERE status = 'pending' AND check_out < CURRENT_DATE
-    """)
-    cancelled = cur.rowcount
-
-    return {"completed": completed, "cancelled": cancelled}
 
 def simulate(minutes, defect_rate, interval, rng_seed) -> None:
     """Fait vivre la base : creations, transitions, modifications, suppressions."""
@@ -623,19 +609,41 @@ def simulate(minutes, defect_rate, interval, rng_seed) -> None:
 
     click.echo(f"\nTermine. Journal : {LOG_PATH}")
 
+def expire_past_stays(cur) -> dict[str, int]:
+    """Fait vieillir la base : du temps a passé depuis le dernier lancement.
+
+    Invariant : aucun séjour dont le check_out est passé ne reste
+    en 'pending' ou 'confirmed'.
+    """
+    # Séjour honoré : le client est venu, le séjour est terminé.
+    cur.execute("""
+        UPDATE bookings SET status = 'completed'
+        WHERE status = 'confirmed' AND check_out < CURRENT_DATE
+    """)
+    completed = cur.rowcount
+
+    # Jamais confirmé et la date est passée : réservation abandonnée.
+    cur.execute("""
+        UPDATE bookings SET status = 'cancelled'
+        WHERE status = 'pending' AND check_out < CURRENT_DATE
+    """)
+    cancelled = cur.rowcount
+
+    return {"completed": completed, "cancelled": cancelled}
+
 
 @cli.command()
-def age():
-    """Applique le passage du temps sans générer de nouvelle activité."""
-    with psycopg.connect(
-        host=os.environ["POSTGRES_HOST"],
-        port=os.environ["POSTGRES_PORT"],
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-        dbname=os.environ["POSTGRES_DB"],
-    ) as conn:
-        with conn.cursor() as cur:
-            print(expire_past_stays(cur))
+def age() -> None:
+    """Applique le passage du temps sans generer de nouvelle activite.
+
+    Le vieillissement est declenche par le calendrier, pas par une action
+    utilisateur : cette commande permet de le rejouer seul, sans creer de
+    volume — utile au Jour 10 pour provoquer du mouvement mesurable.
+    """
+    with connect() as conn, conn.cursor() as cur:
+        n = complete_past_stays(cur)
+        click.echo(f"{n} reservation(s) vieillie(s)")
+
 
 if __name__ == "__main__":
     cli()
