@@ -230,3 +230,97 @@ Trois ADR écrits (région, mode d'authentification, bac à sable).
 - `$booking12` au lieu de `booking12` : le `$` ne se met qu'à la lecture d'une
   variable. gcloud a reçu une chaîne vide. Réflexe pris : toujours `echo` une
   variable avant de la passer à une commande qui crée quelque chose.
+
+## Jour 7 — Extraction incrémentale
+
+### Le décorateur détourné
+
+`simulate` avait disparu des commandes Click, et `age` levait
+`psycopg.ProgrammingError: no result available`. Une seule cause : la fonction
+`expire_past_stays` s'était insérée entre les `@click.option` et `def simulate`.
+Les décorateurs s'appliquent à ce qui les suit IMMÉDIATEMENT, donc ils se sont
+posés sur `expire_past_stays`, qui est devenue un objet `click.Command`.
+Quand `age` l'appelait avec un curseur, Click l'interprétait comme une liste
+d'arguments de ligne de commande.
+
+Python n'émet aucun avertissement, et l'erreur se manifeste quatre appels plus
+bas, dans les entrailles de Click. À rapprocher des `@task` d'Airflow au Jour 12,
+où un décorateur mal placé produit un DAG qui se charge sans erreur mais dont
+une tâche n'apparaît jamais dans le graphe.
+
+Corrigé en supprimant `expire_past_stays`, qui doublonnait `complete_past_stays`
+— déjà écrite, et meilleure puisqu'elle journalise chaque transition.
+Réflexe à prendre : `grep` sur le fichier avant d'y ajouter une fonction.
+
+### Le watermark empoisonné par une donnée du futur
+
+Premier `watermarks.json` produit :
+`"payments": "2026-09-03T16:14:36.392128+00:00"` — deux jours dans le futur,
+alors qu'une seule ligne avait été extraite sur 1720.
+
+Cause : `insert_payments` écrivait `paid_at` (jusqu'à +48 h) dans `created_at`
+et `updated_at`. Le watermark mémorisait donc une date que l'horloge ne
+rattraperait qu'au surlendemain, et pendant deux jours l'extraction aurait
+ignoré tous les paiements réels. Aucune erreur, aucun symptôme visible.
+
+Deux corrections :
+- côté source, séparer la date MÉTIER de la métadonnée TECHNIQUE
+  (`tech = min(paid_at, now_utc())`) : une capture différée est plausible,
+  une ligne modifiée dans le futur ne l'est pas ;
+- côté extraction, plafonner le watermark à `now()` avec un message d'alerte.
+  Le Parquet garde la ligne telle quelle — la couche raw copie, elle ne
+  corrige pas ; le nettoyage appartient au `stg_*` du Jour 17.
+
+Ce que j'en retiens : un watermark n'est jamais plus fiable que la colonne dont
+il dérive. En production, ce motif se manifeste par un job dont la durée
+augmente lentement pendant des semaines, sans qu'aucune alerte ne se déclenche.
+C'est ma réponse à la question 3 d'entretien.
+
+L'étage suivant de la parade serait d'exclure les lignes futures vers une table
+de quarantaine plutôt que de les copier — même logique que les paiements
+orphelins du Jour 20, qu'on compte au lieu de les cacher. Pas fait.
+
+### La marge de sécurité, vue en vrai
+
+Seconde exécution après correction : 1 ligne relue pour hotels, customers et
+bookings, mais 28 pour payments. Explication : le `min(paid_at, now_utc())`
+ramène tous les paiements « futurs » à l'instant du seed, donc ils partagent un
+`updated_at` groupé dans la dernière seconde, et la marge de 5 s les rattrape
+en bloc.
+
+Pas un bug — la démonstration que `updated_at` n'est pas unique et qu'un
+watermark seul ne découpe jamais proprement. Sans la marge, ces 28 lignes
+auraient été du côté de la PERTE au lieu du doublon, et rien ne me l'aurait dit.
+
+Chiffre à retenir : 1,6 % de redondance, 0 perte.
+
+### Constaté pour le Jour 10
+
+`delete_old_pending` a supprimé 3 réservations pendant la simulation. Aucun
+`updated_at` ne bouge lors d'un DELETE physique : l'extraction incrémentale ne
+peut structurellement pas les voir. Premier élément chiffré de
+`docs/limites-batch.md`.
+
+### Reste à faire
+- `tests/test_extract.py` : seuil de redondance à la seconde exécution
+  (surtout pas un test à zéro, il interdirait la marge de sécurité).
+
+## Jour 8 — Chargement BigQuery
+
+Premier lot chargé : hotels 159, customers 1533, bookings 6072,
+payments 5379, depuis 12 fichiers Parquet par table.
+
+État de `raw_booking.customers` :
+- 1533 lignes brutes
+- 500 clés distinctes  ← identique à la source, aucune perte
+- 12 fichiers sources
+
+Facteur de redondance : 3,07. Origine identifiée : suppressions
+répétées de `state/watermarks.json` pendant le jour 7, qui ont fait
+relire chaque table depuis 1970. La marge de sécurité de 5 s n'y est
+pour presque rien.
+
+La couche raw assume ces doublons — elle est append-only par
+construction. Ce qui compte est qu'ils soient traçables (`_source_file`)
+et réversibles (`_ingested_at` comme identifiant de lot). La
+déduplication est le sujet du jour 9, puis du `stg_*` au jour 17.

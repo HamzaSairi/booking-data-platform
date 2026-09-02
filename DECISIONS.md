@@ -211,3 +211,64 @@ coup ; le plafond fait échouer le job avant exécution. C'est le garde-fou le
 plus fort des deux.
 **À revoir** : jour 26, si Terraform exige un compte de facturation actif.
 **Date** : 2026-09-01
+
+## ADR-009 — Extraction incrémentale : `>` avec marge de sécurité
+**Contexte** : l'extraction doit ne lire que les lignes modifiées depuis le
+dernier passage, via `WHERE updated_at > watermark`.
+
+**Le problème réel** — plus large que le classique `>` vs `>=` :
+1. `>=` relit systématiquement la dernière ligne : doublon garanti, jamais de
+   perte.
+2. `>` l'exclut. Mais `updated_at` n'est pas unique : si N lignes partagent le
+   même timestamp et que l'extraction s'interrompt au milieu, les suivantes
+   sont perdues silencieusement.
+3. Pire, et indépendant du choix de l'opérateur : Postgres date une ligne au
+   DÉBUT de sa transaction, pas au commit. Une transaction ouverte à 10:00:00
+   et commitée à 10:00:05 écrit une ligne datée 10:00:00. Si le pipeline passe
+   à 10:00:03, cette ligne apparaît APRÈS son passage avec un timestamp
+   ANTÉRIEUR : invisible pour toujours.
+
+**Décision** : `>`, plus une marge de sécurité de 5 secondes (`SAFETY_MARGIN`)
+qui recule la borne, plus une déduplication en aval au Jour 17
+(`ROW_NUMBER() OVER (PARTITION BY pk ORDER BY updated_at DESC)`).
+
+**Raison** : aucune valeur de watermark ne règle le point 3 — c'est une limite
+structurelle de l'extraction par requête, et c'est l'argument qui justifiera
+Debezium au sprint 5. On choisit donc le compromis : accepter un doublon
+détectable plutôt qu'une perte silencieuse.
+
+**Coût mesuré** : 28 lignes relues sur 1720 paiements à la seconde exécution,
+soit 1,6 % de redondance, et 1 ligne pour chacune des trois autres tables.
+Zéro perte.
+
+**Date** : 2026-09-01
+
+## ADR-010 — Ordre écrire-puis-avancer, et écriture atomique de l'état
+**Contexte** : l'extraction produit un fichier Parquet et met à jour un
+watermark persisté dans `state/watermarks.json`.
+**Options** : (a) avancer le watermark puis écrire, (b) écrire puis avancer,
+(c) transaction distribuée entre le disque et le fichier d'état.
+**Décision** : (b), avec `sauver_etat` qui écrit dans un `.tmp` puis fait un
+`replace()` atomique.
+**Raison** : un plantage entre les deux étapes est inévitable à terme (disque
+plein, processus tué, coupure). Dans l'ordre (b) il produit un doublon, que la
+déduplication absorbe ; dans l'ordre (a) il produit une perte définitive.
+(c) est hors de portée et rarement justifié.
+C'est la garantie **at-least-once**, la même qu'au Jour 24 avec le commit
+d'offset Kafka : on ne confirme jamais avant d'avoir écrit.
+Le `replace()` protège du symétrique : un JSON tronqué rendrait l'état
+illisible au tour suivant.
+**Coût** : doublons à traiter en aval. Assumé.
+**Date** : 2026-09-01
+
+## ADR-011 — Garde d'identité de base dans le fichier d'état
+**Contexte** : `state/watermarks.json` vit sur le disque hôte et survit à un
+`docker compose down -v`, qui détruit pourtant le volume Postgres.
+**Décision** : stocker `pg_control_system().system_identifier` à côté des
+watermarks et refuser de démarrer s'il diffère de celui de la base connectée.
+**Raison** : sans cette garde, une base recréée avec 2000 réservations neuves
+et un watermark resté à hier produit une extraction à 0 ligne, sans erreur.
+Testé réellement : le message explicite s'est affiché comme prévu.
+Le problème avait déjà été rencontré au Jour 5 avec `simulation_log.jsonl`.
+**Coût** : deux minutes de code, une requête supplémentaire au démarrage.
+**Date** : 2026-09-01
