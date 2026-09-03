@@ -14,7 +14,7 @@ from google.cloud import bigquery
 
 load_dotenv()
 
-PROJECT = os.environ["GCP_PROJECT"]
+PROJECT = os.environ["GCP_PROJECT_ID"]
 RAW = "raw_booking"
 STAGING = "staging_booking"
 LOCATION = "EU"
