@@ -331,3 +331,127 @@ rien à mesurer :
     python simulator/generate.py simulate --minutes 10 --defect-rate 0.1
 Objectif : des suppressions physiques et des transitions de statut
 multiples entre deux extractions, pour chiffrer ce que le batch rate.
+
+## Jour 9 — Idempotence
+
+**Fait** : vues de déduplication `staging_booking.v_*`, test d'idempotence sous
+rejeu forcé, mise en place de ruff et pytest.
+
+**Ce que j'ai compris aujourd'hui**
+L'idempotence n'est pas une propriété de chaque table, mais de la *sortie
+observable* du pipeline. Ma raw ne sera jamais idempotente en nombre de lignes —
+c'est un journal append-only, c'est sa fonction. Le contrat correct est :
+l'état métier après N exécutions est identique à l'état après 1 exécution.
+J'ai perdu du temps au début en cherchant à stabiliser le mauvais compteur.
+
+**Le test creux, et pourquoi je ne l'ai pas écrit**
+Le réflexe naturel est de lancer le pipeline trois fois de suite et de vérifier
+que le compte ne bouge pas. Ce test passe toujours et ne prouve rien : après la
+première exécution le watermark a avancé, les deux suivantes n'extraient rien.
+On teste que ne rien faire ne change rien. Le test utile efface l'état avant
+chaque rejeu — c'est le vrai scénario de crash — et assert que la raw a grossi,
+faute de quoi il se saurait vide.
+
+**Un incident qui a servi de preuve**
+J'ai interrompu le test par Ctrl+C en pleine requête BigQuery, potentiellement
+juste après l'effacement de l'état. Aucune réparation manuelle n'a été
+nécessaire : la relance a tout re-extrait et reconstruit l'état seule.
+L'idempotence a été vérifiée par accident avant de l'être par assertion.
+Si j'avais dû réparer à la main ici, la conception aurait été fausse.
+
+**Chiffres relevés**
+- Ratio de duplication avant déduplication : ~3,0 sur les quatre tables.
+  `hotels` est la plus haute (3,18) parce qu'elle est statique, `bookings` la
+  plus basse (2,97) parce qu'elle croît. Le ratio de duplication d'une table
+  décroît mécaniquement avec son taux de croissance — utile pour diagnostiquer.
+- Test d'idempotence : 2 passed en 99 s, 3 rejeux complets, sortie inchangée.
+
+**Découverte non cherchée**
+En vérifiant les paiements orphelins (attendus par l'ADR-003), j'ai trouvé 0 —
+en cible *et* en source. Le défaut n'est pas injecté par le simulateur, l'ADR-003
+est à corriger. Mais la comparaison source/cible a révélé autre chose :
+
+| table    | source | staging | écart |
+|----------|--------|---------|-------|
+| bookings |   2000 |    2046 |   +46 |
+| payments |   1720 |    1741 |   +21 |
+| customers|    500 |     500 |     0 |
+| hotels   |     50 |      50 |     0 |
+
+Les tables sujettes aux suppressions physiques divergent, les autres non.
+2,3 % de lignes fantômes dans `bookings`, invisibles à tous mes tests actuels,
+et l'écart grandira à chaque exécution du simulateur. C'est le sujet du jour 10.
+À noter : une vérification négative m'a révélé un problème que je ne cherchais pas.
+
+**Limite de mon test, à ne pas oublier**
+`test_idempotence.py` suppose une source figée. Si le simulateur tourne pendant
+son exécution, de nouvelles lignes remontent légitimement et l'empreinte change —
+échec pour une bonne raison, le pire type d'échec. La parade propre (comparer sur
+un périmètre gelé plutôt que sur la table entière) est le même problème que la
+réconciliation CDC du jour 25.
+
+**Effet de bord du test** : `test_idempotence.py` quadruple la raw à chaque
+exécution. Le lancer en boucle n'est pas gratuit — 24 225 lignes après un seul
+passage, et ça se cumule. Raison supplémentaire de le laisser derrière le
+marqueur `bigquery` et hors de la CI.
+
+**280 réservations sans paiement** : 154 `cancelled`, 126 `pending`, 0 `confirmed`.
+Métier légitime, pas un défaut de qualité. En revanche le zéro sur `confirmed`
+révèle une invariante que je n'avais pas formalisée — toute réservation confirmée
+a un paiement — qui devient un test singulier dbt au jour 20. Une règle métier
+trouvée en regardant les données vaut mieux qu'une règle recopiée d'un tutoriel.
+
+**À faire demain**
+- Corriger `simulate` pour injecter réellement des paiements orphelins, et
+  mettre à jour l'ADR-003.
+- Chiffrer les suppressions et les transitions de statut perdues
+  (`docs/limites-batch.md`).
+
+
+  ## Jour 10 — Ce que le batch ne voit pas
+
+**Fait** : trigger d'audit comme vérité terrain, campagne de simulation de
+10 min, mesure des pertes, `docs/limites-batch.md`, ADR-007.
+
+**Les chiffres**
+21 transitions perdues sur 209 (10 %). 13 lignes fantômes sur 2 322 (0,56 %).
+0 détectée par le pipeline.
+
+Le zéro est le vrai résultat. Les deux premiers chiffres disent qu'il y a un
+problème ; le troisième dit qu'il est invisible. Un pipeline vert, des tests qui
+passent, une fraîcheur correcte — et 34 anomalies dans la cible.
+
+**La réservation 931**
+Supprimée à 15:51:32, toujours en cible, statut `pending`, `updated_at` au
+5 août. Un analyste y voit une réservation en attente depuis un mois. Ce qui
+frappe, c'est qu'elle n'a l'air de rien : bien typée, cohérente, plausible.
+C'est une ligne propre qui ment. J'ai enfin une image concrète de ce qu'on
+appelle un échec silencieux.
+
+**Ce que j'ai raté, et corrigé**
+Première mesure : 46 fantômes. Mesure propre : 13. L'écart venait de mon
+protocole — comptes source et cible pris à des instants différents pendant que
+le simulateur écrivait. Je mesurais du bruit et j'allais l'écrire dans un ADR.
+
+Règle retenue : une comparaison source/cible n'a de sens que sur une source
+figée, ou sur un périmètre borné par une clé et un instant. C'est le même
+problème que la limite de `test_idempotence.py` notée hier, et ce sera le même
+au jour 25. Trois occurrences en deux jours — ce n'est pas un détail, c'est un
+motif.
+
+**Une hypothèse réfutée**
+J'ai supposé un troisième mode d'échec : des lignes créées puis supprimées entre
+deux extractions, invisibles partout. Mesure : 0. Le simulateur ne supprime que
+des `pending` anciennes. Le mode d'échec existe dans l'absolu, pas dans mes
+données. Je le laisse écrit avec sa réfutation.
+
+**L'ironie du jour**
+Pour prouver qu'il me manquait un journal de changements, j'ai dû construire un
+journal de changements avec un trigger. Postgres en tient un depuis le premier
+jour — le WAL. Le sprint 5 consistera à le lire au lieu de le dupliquer. C'est,
+je crois, la meilleure façon d'expliquer le CDC par log en entretien.
+
+**Réserve honnête**
+14 suppressions, c'est un ordre de grandeur, pas une statistique. Le résultat sur
+les transitions (188 observations) est bien plus solide. Ne pas survendre le
+second chiffre.

@@ -299,3 +299,172 @@ empêcherait les requêtes d'exploration que je fais encore
 quotidiennement. Serait obligatoire sur une table de production.
 
 **Date** : 2026-09-02
+
+## ADR-013 — Déduplication à la lecture plutôt qu'à l'écriture
+
+**Date** : 2026-09-03
+
+**Contexte**
+Le pipeline offre une garantie at-least-once, par construction : `extract.py`
+avance le watermark après écriture, `load.py` met à jour le manifeste après le
+job de chargement. Un crash entre les deux étapes rejoue le travail plutôt que
+de le perdre. Conséquence mesurée sur `raw_booking` avant toute correction :
+
+| table     | raw  | clés distinctes | ratio |
+|-----------|------|-----------------|-------|
+| hotels    |  159 |              50 | 3,18  |
+| customers | 1533 |             500 | 3,07  |
+| bookings  | 6072 |            2046 | 2,97  |
+| payments  | 5379 |            1741 | 3,09  |
+
+L'uniformité des ratios autour de 3 signe un rejeu global (réinitialisations de
+watermark), non une duplication accidentelle : un bug de clé donnerait des
+ratios dispersés.
+
+**Options**
+
+(a) **MERGE dans la raw.** Déduplication à l'écriture, la raw devient un état
+courant. Perte du journal : plus de rejeu possible, plus de débogage « qu'est-ce
+qui est arrivé mardi », plus d'annulation d'un lot par `DELETE WHERE
+_ingested_at = '...'`. Le DML est facturé au scan alors que les load jobs sont
+gratuits — on paierait pour perdre de l'information.
+
+(b) **Écrasement de partition.** Écarté par conséquence directe de l'ADR-005 :
+les partitions sont sur `_ingested_at`, pas sur une date métier. Une ligne
+modifiée aujourd'hui atterrit dans la partition d'aujourd'hui quelle que soit sa
+date de réservation ; il n'existe donc aucune partition contenant « toutes les
+versions de la journée métier X » à réécrire. Le pattern reste pertinent, mais
+sur un partitionnement métier — ce sera le sujet du backfill (jour 13).
+
+(c) **Raw append-only + déduplication à la lecture.** La raw reste un journal
+immuable ; la déduplication devient une opération de lecture, par
+`ROW_NUMBER() OVER (PARTITION BY pk ORDER BY updated_at DESC, _ingested_at DESC)`.
+
+**Décision** : (c).
+
+**Raisons**
+- La raw conserve sa fonction de journal d'audit rejouable.
+- Aucun coût d'écriture supplémentaire ; les vues sont gratuites en stockage.
+- C'est le modèle que dbt industrialisera au jour 17 (`stg_*` en view) : le
+  travail manuel d'aujourd'hui est une compréhension, pas une dette.
+
+**Détails d'implémentation qui comptent**
+- Le second critère de tri (`_ingested_at DESC`) n'est pas cosmétique : il ferme
+  le départage des lignes de même `updated_at`, cas produit par le choix de `>`
+  plutôt que `>=` sur le watermark (ADR du jour 7). Sans lui, le gagnant serait
+  choisi arbitrairement et la sortie ne serait pas reproductible.
+- Les colonnes techniques (`_ingested_at`, `_source_file`) sont exclues de la
+  vue. Elles diffèrent entre deux copies d'une même ligne ; les conserver
+  rendrait la sortie sensible à *quelle* copie a gagné.
+
+**Contreparties assumées**
+1. Le stockage croît indéfiniment avec les doublons. Mesuré : un seul passage du
+   test d'idempotence a fait passer `raw_booking.bookings` de 6 072 à 24 225
+   lignes (×4, trois rejeux complets) pour une sortie métier strictement
+   inchangée à 2 046. Ratio brut/métier : 11,8. C'est le prix de la garantie
+   at-least-once, et il est assumé tant que la raw reste sous quelques Go.
+2. Chaque lecture repaie la déduplication (fenêtre sur la table entière).
+   Acceptable au volume actuel, à revoir si la raw dépasse quelques Go.
+3. **Limite connue et non résolue** : la vue est incapable de détecter les
+   suppressions physiques en source. Une ligne supprimée de Postgres reste
+   vivante dans la vue, indéfiniment. Écart déjà constaté au jour 9 :
+   2000 réservations en source contre 2046 dans `v_bookings`, soit 46 lignes
+   fantômes (2,3 %). C'est le constat qui sera chiffré au jour 10 et qui
+   justifiera le CDC au sprint 5.
+
+**Vérification**
+`tests/test_idempotence.py` : le pipeline rejoue trois fois l'intégralité de son
+travail (état effacé entre chaque passage pour simuler le crash), la raw gonfle,
+et l'empreinte MD5 du contenu de chaque vue staging reste identique. Le test
+inclut un garde-fou asserant que la raw a bien grossi — sans lui, le test
+passerait sans avoir rien rejoué.
+
+## ADR-014 — Adopter le CDC par log après mesure des limites du batch
+
+**Date** : 2026-09-03
+
+**Contexte**
+Le pipeline batch est fonctionnel, idempotent et testé (ADR-006,
+`test_idempotence.py`). La question n'est pas de le réparer : il est correct au
+regard de ce qu'il observe. La question est de savoir ce qu'il n'observe pas.
+
+Mesure réalisée sur une campagne de 10 minutes, une seule exécution du pipeline
+après coup — le comportement d'un `@daily`. Vérité terrain établie par un
+trigger d'audit sur `bookings` (`postgres/init/02_audit.sql`).
+
+| Constat | Chiffre |
+|---|---|
+| Transitions de statut réellement survenues | 209 |
+| Transitions capturables par le batch | 188 |
+| **Transitions perdues** | **21 (10,0 %)** |
+| Suppressions physiques survenues | 14 |
+| **Lignes fantômes en cible** | **13 (0,56 %)** |
+| **Anomalies détectées par le pipeline** | **0** |
+
+Détail complet et cas nominatif (réservation 931) : `docs/limites-batch.md`.
+
+**Nature du problème**
+Ces limites sont **structurelles à l'extraction incrémentale par `updated_at`**,
+pas conjoncturelles :
+- un `DELETE` ne modifie aucun `updated_at` — il est illisible par construction ;
+- interroger périodiquement une colonne ne restitue que l'état au moment de la
+  requête, jamais la trajectoire entre deux requêtes.
+
+Aucune optimisation ne les corrige. Passer d'un batch quotidien à un batch
+horaire réduit la latence et diminue la probabilité de transitions multiples
+dans une fenêtre, mais ne rend lisible ni les suppressions ni les états
+intermédiaires. On réduirait la fréquence du symptôme, pas la cause.
+
+**Options**
+
+(a) **Augmenter la fréquence du batch.** Simple, aucune infrastructure nouvelle.
+Ne résout ni les suppressions ni les transitions ; multiplie le coût
+d'extraction ; les 21 transitions perdues deviendraient peut-être 8, jamais 0.
+
+(b) **Suppression logique en source.** Remplacer les `DELETE` par un flag
+`is_deleted`. Résout les fantômes, pas les transitions. Surtout : exige de
+modifier le schéma d'une base applicative dont on n'est pas propriétaire —
+hypothèse irréaliste en contexte réel, et c'est précisément le cadre qu'on
+simule ici.
+
+(c) **Trigger d'audit généralisé.** Étendre à toutes les tables le mécanisme
+utilisé pour la mesure. Capture tout, mais alourdit chaque écriture de la base
+transactionnelle, se maintient table par table, et fait porter au service métier
+le coût d'un besoin analytique. C'est un anti-pattern connu.
+
+(d) **CDC par log (Debezium + Redpanda).** Lecture du WAL, qui contient déjà
+l'intégralité des changements — y compris les `DELETE` et chaque transition
+intermédiaire. Impact quasi nul sur la source : aucune requête, aucun trigger.
+
+**Décision** : (d), au sprint 5.
+
+**Raison**
+L'information manquante n'a pas à être produite : elle existe déjà. Postgres
+écrit chaque modification dans son WAL avant de l'appliquer — c'est la garantie
+de durabilité, pas une option. Les options (b) et (c) consistent à faire
+produire une seconde fois par la base une information qu'elle journalise déjà.
+Le CDC par log consiste à la lire.
+
+L'ironie du trigger d'audit écrit aujourd'hui est instructive : il a fallu
+construire un journal de changements pour prouver qu'il manquait un journal de
+changements — alors que Postgres en tient un depuis toujours.
+
+**Coûts assumés**
+- Trois composants supplémentaires à exploiter (Redpanda, Kafka Connect,
+  consommateur), soit une empreinte mémoire notable en local.
+- Le slot de réplication devient un point de défaillance : un slot dont personne
+  ne consomme les données empêche Postgres de purger son WAL, jusqu'à saturation
+  du disque. Incident de production classique, à surveiller dès le jour 22.
+- Garantie at-least-once côté consommateur → déduplication en aval obligatoire.
+  Cohérent avec l'ADR-006, qui a déjà fait ce choix pour le batch.
+- Le batch n'est pas supprimé : il reste pertinent pour les tables statiques
+  (`hotels`) et sert de filet de réconciliation (jour 25).
+
+**Critères de vérification au sprint 5**
+Formulés avant implémentation, à confronter honnêtement même en cas d'erreur
+(`docs/limites-batch.md`, dernière section) :
+1. les 21 transitions perdues apparaissent, une par message, ordonnées par LSN ;
+2. les suppressions produisent `op = 'd'` avec le `before` renseigné ;
+3. la réservation 931 disparaît de la cible ;
+4. latence sous 5 secondes ;
+5. réconciliation : lignes actives en source == lignes actives en cible.
