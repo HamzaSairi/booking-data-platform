@@ -272,3 +272,30 @@ Testé réellement : le message explicite s'est affiché comme prévu.
 Le problème avait déjà été rencontré au Jour 5 avec `simulation_log.jsonl`.
 **Coût** : deux minutes de code, une requête supplémentaire au démarrage.
 **Date** : 2026-09-01
+
+## ADR-012 — Partitionner la couche raw sur `_ingested_at`
+
+**Contexte** : les tables `raw_booking.*` reçoivent des chargements
+quotidiens en WRITE_APPEND et doivent être partitionnées.
+
+**Options** : (a) date métier (`booking_date`, `created_at`),
+(b) `_ingested_at`, (c) pas de partitionnement.
+
+**Décision** : `_ingested_at`, type DAY, clustering sur la clé primaire.
+
+**Raison** : les trois usages réels de la couche raw — rejouer un
+chargement, déboguer ce qui est arrivé à une date donnée, purger
+l'historique — filtrent tous sur le moment d'arrivée. Une date métier
+ferait en outre écrire chaque run dans ~90 partitions simultanément.
+Le clustering sur la PK anticipe le MERGE du jour 9, qui joint sur
+cette colonne.
+
+**Coût assumé** : une requête filtrant sur une date métier scanne la
+table entière. Acceptable, la raw n'a pas vocation à être requêtée
+directement — c'est le rôle des marts.
+
+**Non retenu pour l'instant** : `require_partition_filter`. Il
+empêcherait les requêtes d'exploration que je fais encore
+quotidiennement. Serait obligatoire sur une table de production.
+
+**Date** : 2026-09-02

@@ -324,3 +324,10 @@ La couche raw assume ces doublons — elle est append-only par
 construction. Ce qui compte est qu'ils soient traçables (`_source_file`)
 et réversibles (`_ingested_at` comme identifiant de lot). La
 déduplication est le sujet du jour 9, puis du `stg_*` au jour 17.
+
+### À faire avant le jour 10
+Laisser la base vivre entre le jour 9 et le jour 10, sinon il n'y aura
+rien à mesurer :
+    python simulator/generate.py simulate --minutes 10 --defect-rate 0.1
+Objectif : des suppressions physiques et des transitions de statut
+multiples entre deux extractions, pour chiffrer ce que le batch rate.

@@ -9,7 +9,7 @@ les perdrait définitivement.
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -22,7 +22,7 @@ load_dotenv()
 
 TABLES = ["hotels", "customers", "bookings", "payments"]
 
-EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 # Postgres date une ligne au DEBUT de sa transaction, pas au commit. Une
 # transaction longue peut donc écrire une ligne datée d'avant le passage
@@ -109,7 +109,7 @@ def extract_table(conn, table: str, watermark: datetime):
     # applicatif, horloge décalée, colonne technique dérivée d'une date
     # métier). Le watermark le mémoriserait et ignorerait ensuite toutes les
     # lignes réelles jusqu'à ce que l'horloge le rattrape — sans erreur.
-    maintenant = datetime.now(timezone.utc)
+    maintenant = datetime.now(UTC)
     if nouveau > maintenant:
         print(f"  ! {table} : updated_at futur ({nouveau}), watermark plafonné")
         nouveau = maintenant
@@ -121,7 +121,7 @@ def ecrire_parquet(table: str, lignes: list, colonnes: list[str]) -> Path:
     donnees = {c: [ligne[i] for ligne in lignes] for i, c in enumerate(colonnes)}
     arrow = pa.table(donnees)
 
-    dt = datetime.now(timezone.utc)
+    dt = datetime.now(UTC)
     # Convention Hive dt=YYYY-MM-DD, comprise par BigQuery et dbt.
     dossier = DATA_DIR / table / f"dt={dt:%Y-%m-%d}"
     dossier.mkdir(parents=True, exist_ok=True)

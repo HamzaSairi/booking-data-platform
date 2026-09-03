@@ -9,7 +9,7 @@ l'ordre inverse le perdrait.
 import io
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -109,7 +109,7 @@ def charger(client: bigquery.Client, table: str, arrow: pa.Table) -> int:
 
 def run() -> None:
     client = bigquery.Client(project=PROJECT, location=LOCATION)
-    ingested_at = datetime.now(timezone.utc)   # figé pour tout le lot
+    ingested_at = datetime.now(UTC)   # figé pour tout le lot
     deja = charger_manifeste()
 
     for table in TABLES:

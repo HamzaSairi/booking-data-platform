@@ -2,10 +2,10 @@
 
 import subprocess
 import sys
+from datetime import UTC
 from pathlib import Path
 
 import pyarrow.parquet as pq
-import pytest
 
 DATA_DIR = Path("data/raw")
 STATE_FILE = Path("state/watermarks.json")
@@ -68,12 +68,12 @@ def test_aucune_perte(cur):
 
 def test_watermark_jamais_dans_le_futur():
     """Un updated_at aberrant ne doit pas bloquer l'avancement du pipeline."""
-    from datetime import datetime, timezone
     import json
+    from datetime import datetime
 
     lancer_extraction()
     etat = json.loads(STATE_FILE.read_text())
-    maintenant = datetime.now(timezone.utc)
+    maintenant = datetime.now(UTC)
 
     for table, valeur in etat["watermarks"].items():
         wm = datetime.fromisoformat(valeur)
