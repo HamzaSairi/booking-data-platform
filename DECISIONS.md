@@ -468,3 +468,96 @@ Formulés avant implémentation, à confronter honnêtement même en cas d'erreu
 3. la réservation 931 disparaît de la cible ;
 4. latence sous 5 secondes ;
 5. réconciliation : lignes actives en source == lignes actives en cible.
+
+## ADR-008 — Une base de métadonnées Airflow distincte de la base métier
+
+**Date** : 2026-09-04
+**Statut** : accepté
+
+### Contexte
+
+Le `docker-compose.yaml` officiel d'Airflow définit un service nommé
+`postgres` pour sa base de métadonnées. Mon fichier en définit déjà un sous
+ce nom : la base transactionnelle qui simule le système source. La fusion
+des deux fichiers force à trancher entre réutiliser une seule instance
+Postgres et en faire tourner deux.
+
+La question dépasse le conflit de nom. Airflow écrit beaucoup et en continu
+dans sa base : `dag_run`, `task_instance`, `log`, `xcom`, `job`. Sur ce
+projet, quelques milliers de lignes par jour à partir du sprint 3.
+
+### Options
+
+**(a) Une seule instance, deux bases logiques.** Airflow crée une base
+`airflow` dans le conteneur Postgres existant. Économise environ 200 Mo de
+RAM et un volume.
+
+**(b) Deux instances.** Un second conteneur `airflow-db`, avec son propre
+volume et sa propre configuration.
+
+**(c) SQLite pour Airflow.** Écarté d'emblée : incompatible avec
+LocalExecutor, qui exige des écritures concurrentes.
+
+### Décision
+
+Option (b) : un conteneur `airflow-db` dédié, en `postgres:16`, volume
+`airflow-db-data`, sans réplication logique.
+
+### Raisons, par ordre d'importance
+
+**1. Le CDC du sprint 5.** La base source tourne en `wal_level=logical` et
+son WAL sera lu par Debezium au jour 22. Les tables d'Airflow y produiraient
+des dizaines de milliers d'événements de changement par jour, sans aucune
+valeur métier, à filtrer dans le connecteur. Une publication `FOR ALL TABLES`
+répliquerait mes `task_instance` vers BigQuery. Le bruit dans le WAL
+augmenterait aussi le risque de saturation du replication slot, l'incident
+de production classique noté au jour 21.
+
+**2. La remise à zéro du jour 5.** Mon rituel de test de reproductibilité est
+`docker compose down -v`. Avec une instance partagée, il détruirait aussi
+l'historique d'exécution d'Airflow, les backfills du jour 13 et les métriques
+du jour 28 — c'est-à-dire précisément les preuves que je veux montrer.
+Séparer les volumes permettra plus tard de réinitialiser la source sans
+perdre l'orchestrateur.
+
+**3. Le réalisme.** En production, une base source appartient à une autre
+équipe. On n'y installe pas les tables de son orchestrateur, on n'y a
+souvent même pas les droits de création de schéma. La séparation reproduit
+une contrainte réelle plutôt qu'une commodité de développement.
+
+**4. Le profil de charge.** Airflow écrit de petites transactions en
+permanence ; la base source subit des rafales du simulateur puis des lectures
+d'extraction. Les mélanger rendrait toute mesure de performance ininterprétable
+— je ne saurais pas attribuer une lenteur à mon pipeline ou au scheduler.
+
+### Conséquences
+
+**Coût accepté** : environ 200 Mo de RAM et un volume supplémentaires. Sur une
+machine de 8 Go où tourneront aussi Redpanda et Kafka Connect au sprint 5,
+ce n'est pas négligeable. Atténué par deux choix connexes : le LocalExecutor
+plutôt que Celery (supprime Redis et le worker) et l'absence de triggerer.
+
+**Complexité** : deux volumes à connaître, deux mots de passe. La base Airflow
+garde des identifiants triviaux (`airflow`/`airflow`) écrits dans le compose :
+elle n'est pas exposée hors du réseau Docker et ne contient aucune donnée
+métier. À citer dans `docs/limites.md` — en production, ce serait un secret
+géré.
+
+**Sur la gestion du projet** : les services Airflow sont derrière un profil
+Compose `airflow`. Le `docker compose up -d` habituel ne démarre que la
+source, comme aux dix premiers jours. Airflow ne se lève que sur demande, ce
+qui conserve de la RAM les jours où il ne sert pas.
+
+### Décision liée
+
+La Connection `postgres_source` est fournie par la variable d'environnement
+`AIRFLOW_CONN_POSTGRES_SOURCE` plutôt que créée dans l'interface. Elle est
+alors déclarative, versionnée dans `.env.example`, et survit à toute remise à
+zéro de la base de métadonnées. Contrepartie assumée : elle n'apparaît pas
+dans Admin → Connections, l'interface ne listant que la base de métadonnées.
+C'est le comportement qu'on retrouve avec Secret Manager ou Vault en
+production.
+
+Après l'incident de dérive du mot de passe survenu ce jour, l'URI est
+construite dans le compose à partir de `POSTGRES_PASSWORD` au lieu d'être
+écrite en clair : un secret ne doit exister qu'à un seul endroit.

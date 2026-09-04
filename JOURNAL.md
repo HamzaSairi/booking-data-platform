@@ -455,3 +455,31 @@ je crois, la meilleure façon d'expliquer le CDC par log en entretien.
 14 suppressions, c'est un ordre de grandeur, pas une statistique. Le résultat sur
 les transitions (188 observations) est bien plus solide. Ne pas survendre le
 second chiffre.
+
+### Jour 11 — une base qui n'avait pas le mot de passe de son .env
+Airflow refusait de se connecter avec `air123456`. Trois hypothèses fausses
+avant la bonne : caractère à encoder, gabarit non substitué (vrai, mais pas
+la cause racine), puis enfin le test direct depuis un conteneur tiers.
+
+Cause racine : `POSTGRES_PASSWORD` a été modifié dans `.env` après
+l'initialisation du volume. L'image Postgres ne lit cette variable qu'au
+premier démarrage sur un volume vide. La base a gardé l'ancien mot de passe
+et le fichier décrivait depuis un état qui n'existait pas.
+
+Pourquoi personne ne l'a vu pendant plusieurs jours : mon seul chemin d'accès
+quotidien était `docker compose exec psql`, qui passe par le socket local en
+`trust` et ne demande aucun mot de passe. Les tests, eux, échouaient déjà —
+je ne les avais pas relancés depuis le changement. Il a fallu un second
+client (Airflow, en TCP depuis un autre conteneur) pour révéler la panne.
+
+Deux règles retenues :
+- avant toute hypothèse sur une erreur d'authentification, `printenv` dans
+  le conteneur puis un `psql` direct. Ce qu'on croit avoir configuré et ce
+  qui tourne sont deux choses différentes.
+- un secret écrit à deux endroits finit toujours par diverger. L'URI Airflow
+  est désormais dérivée de POSTGRES_PASSWORD dans le compose.
+
+À réutiliser pour la question 3 d'entretien (« comment détectes-tu un échec
+silencieux ? ») : celui-ci était silencieux parce qu'un seul chemin d'accès
+était emprunté. La détection est venue de la diversité des clients, pas d'une
+alerte.

@@ -17,13 +17,30 @@ def test_tables_peuplees(cur):
 
 
 
-def test_statut_coherent_avec_les_dates(cur):
-    """Un sejour termine ne peut pas etre 'pending' ou 'confirmed'."""
+def test_dates_de_sejour_coherentes(cur):
+    """Invariant structurel : un séjour se termine après avoir commencé.
+
+    Vrai quelle que soit la date d'exécution, contrairement à toute
+    comparaison avec CURRENT_DATE.
+    """
     n = cur.execute("""
-        SELECT count(*) FROM bookings
-        WHERE check_out < CURRENT_DATE AND status IN ('pending', 'confirmed')
+        SELECT count(*) FROM bookings WHERE check_out <= check_in
     """).fetchone()[0]
     assert n == 0
+
+def test_pendings_perimes_restent_marginaux(cur):
+    """Une réservation 'pending' après son check_out est un défaut ASSUMÉ (ADR-003).
+
+    On ne l'interdit pas : on vérifie qu'elle reste marginale. Un dépassement
+    signale un simulateur qui ne fait plus progresser les statuts, pas une
+    corruption de la base. Le seuil est une décision, pas une propriété.
+    """
+    perimes, total = cur.execute("""
+        SELECT count(*) FILTER (WHERE check_out < CURRENT_DATE AND status = 'pending'),
+               count(*)
+        FROM bookings
+    """).fetchone()
+    assert perimes <= 0.05 * total, f"{perimes} pending périmés sur {total}"
 
 
 def test_donnees_etalees_dans_le_temps(cur):

@@ -11,3 +11,6 @@ __pycache__/
 *.tfstate*
 logs/
 .DS_Store
+airflow/logs/
+airflow/plugins/
+airflow/config/
