@@ -1,0 +1,4 @@
+psycopg[binary]
+pyarrow
+google-cloud-bigquery
+python-dotenv
