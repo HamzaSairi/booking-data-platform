@@ -2,8 +2,12 @@
 
 Garantie : at-least-once. Le Parquet est écrit AVANT que le watermark
 n'avance. Un plantage entre les deux fait relire des lignes au prochain
-tour (doublon, absorbé par la déduplication du Jour 17) ; l'ordre inverse
+tour (doublon, absorbé par la déduplication du jour 17) ; l'ordre inverse
 les perdrait définitivement.
+
+Bibliothèque autonome : aucune dépendance à Airflow. La configuration
+vient de l'environnement, que ce soit `.env` en local ou les variables
+injectées par Compose côté orchestrateur.
 """
 
 import json
@@ -24,14 +28,22 @@ TABLES = ["hotels", "customers", "bookings", "payments"]
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
-# Postgres date une ligne au DEBUT de sa transaction, pas au commit. Une
+# Postgres date une ligne au DÉBUT de sa transaction, pas au commit. Une
 # transaction longue peut donc écrire une ligne datée d'avant le passage
 # du pipeline, et devenir invisible à jamais. On recule la borne pour la
 # rattraper : on relit un peu, on ne perd rien.
 SAFETY_MARGIN = timedelta(seconds=5)
 
-STATE_FILE = Path("state/watermarks.json")
-DATA_DIR = Path("data/raw")
+# Ancrées sur la racine du dépôt, jamais sur le répertoire courant :
+# Airflow exécute ses tâches depuis /opt/airflow.
+RACINE = Path(__file__).resolve().parents[1]
+STATE_DIR = RACINE / "state" / "watermarks"
+DATA_DIR = RACINE / "data" / "raw"
+
+
+def rel(chemin: Path) -> str:
+    """Chemin relatif à la racine : le même sur l'hôte et dans le conteneur."""
+    return chemin.relative_to(RACINE).as_posix()
 
 
 # ─── Connexion ───────────────────────────────────────────────────────
@@ -45,7 +57,9 @@ def connect() -> psycopg.Connection:
             dbname=os.environ["POSTGRES_DB"],
         )
     except KeyError as exc:
-        raise SystemExit(f"Variable manquante dans .env : {exc.args[0]}") from exc
+        # RuntimeError et non SystemExit : une bibliothèque lève des
+        # exceptions, seuls les points d'entrée décident de sortir.
+        raise RuntimeError(f"Variable d'environnement manquante : {exc.args[0]}") from exc
     return psycopg.connect(info)
 
 
@@ -60,26 +74,29 @@ def db_identity(conn) -> str:
         return cur.fetchone()[0]
 
 
-# ─── État ────────────────────────────────────────────────────────────
-def charger_etat() -> dict:
-    if not STATE_FILE.exists():
-        return {"db_id": None, "watermarks": {}}
-    return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+# ─── État, un fichier par table ──────────────────────────────────────
+# Un fichier unique serait écrasé par le dernier des quatre extracts
+# lancés en parallèle par le DAG. On partitionne au lieu de verrouiller.
+def fichier_etat(table: str) -> Path:
+    return STATE_DIR / f"{table}.json"
 
 
-def sauver_etat(etat: dict) -> None:
+def charger_etat(table: str) -> dict:
+    f = fichier_etat(table)
+    if not f.exists():
+        return {"db_id": None, "watermark": None}
+    return json.loads(f.read_text(encoding="utf-8"))
+
+
+def sauver_etat(table: str, etat: dict) -> None:
     """Écriture atomique : un plantage en cours d'écriture ne doit pas
     laisser un JSON tronqué, qui rendrait l'état illisible au prochain tour.
     """
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_FILE.with_suffix(".tmp")
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    cible = fichier_etat(table)
+    tmp = cible.with_suffix(".tmp")
     tmp.write_text(json.dumps(etat, indent=2, default=str), encoding="utf-8")
-    tmp.replace(STATE_FILE)
-
-
-def lire_watermark(etat: dict, table: str) -> datetime:
-    valeur = etat["watermarks"].get(table)
-    return datetime.fromisoformat(valeur) if valeur else EPOCH
+    tmp.replace(cible)
 
 
 # ─── Extraction ──────────────────────────────────────────────────────
@@ -132,41 +149,42 @@ def ecrire_parquet(table: str, lignes: list, colonnes: list[str]) -> Path:
     return chemin
 
 
-# ─── Orchestration ───────────────────────────────────────────────────
-def run() -> None:
-    etat = charger_etat()
+def extract_one(table: str) -> list[str]:
+    """Extrait une table. Retourne les chemins relatifs écrits (0 ou 1)."""
+    etat = charger_etat(table)
 
     with connect() as conn:
         identite = db_identity(conn)
-
         if etat["db_id"] is None:
             etat["db_id"] = identite
         elif etat["db_id"] != identite:
-            raise SystemExit(
-                f"Le fichier d'état appartient à une autre base "
-                f"({etat['db_id']}) que celle connectée ({identite}).\n"
-                f"La base a probablement été recréée par `down -v`.\n"
-                f"Supprime {STATE_FILE} pour repartir de zéro."
+            raise RuntimeError(
+                f"L'état de {table} appartient à une autre base ({etat['db_id']}) "
+                f"que celle connectée ({identite}). La base a probablement été "
+                f"recréée par `down -v`. Supprime {fichier_etat(table)}."
             )
 
-        total = 0
-        for table in TABLES:
-            resultat = extract_table(conn, table, lire_watermark(etat, table))
+        wm = datetime.fromisoformat(etat["watermark"]) if etat["watermark"] else EPOCH
+        resultat = extract_table(conn, table, wm)
 
-            if resultat is None:
-                print(f"{table:>10} : 0 ligne")
-                continue
+    if resultat is None:
+        print(f"{table:>10} : 0 ligne")
+        return []
 
-            lignes, colonnes, nouveau = resultat
+    lignes, colonnes, nouveau = resultat
 
-            chemin = ecrire_parquet(table, lignes, colonnes)   # 1. écrire
-            etat["watermarks"][table] = nouveau.isoformat()    # 2. avancer
-            sauver_etat(etat)                                  # 3. persister
+    chemin = ecrire_parquet(table, lignes, colonnes)   # 1. écrire
+    etat["watermark"] = nouveau.isoformat()            # 2. avancer
+    sauver_etat(table, etat)                           # 3. persister
 
-            total += len(lignes)
-            print(f"{table:>10} : {len(lignes):>5} lignes -> {chemin}")
+    print(f"{table:>10} : {len(lignes):>5} lignes -> {rel(chemin)}")
+    return [rel(chemin)]
 
-    print(f"\nTotal : {total} ligne(s) extraite(s)")
+
+# ─── Point d'entrée CLI ──────────────────────────────────────────────
+def run() -> None:
+    fichiers = [f for table in TABLES for f in extract_one(table)]
+    print(f"\n{len(fichiers)} fichier(s) écrit(s)")
 
 
 if __name__ == "__main__":
