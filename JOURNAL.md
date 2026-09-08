@@ -551,3 +551,36 @@ table statique ne peut pas partager le seuil d'une table transactionnelle.
 
 **Reste à faire** : vérification de l'échec forcé sur `validate` via la
 conf `{"echec_validate": "bookings"}` dans l'interface.
+
+## Jour 13 — backfill : le fond acquis, l'exécution bloquée
+
+**Acquis, démontré à la main :** extraction par fenêtre `[start, end)`,
+chemin de sortie déterministe, partition BigQuery sur `_interval_start`,
+écrasement par décorateur. Deux chargements consécutifs de la fenêtre du
+3 septembre : 632 lignes, une seule partition, compte stable. C'est
+l'idempotence temporelle, vérifiée sur la cible.
+
+**Non abouti :** aucun des quatre backfills créés (id 1 à 5) n'a produit
+de fichier. Cause identifiée en fin de journée : un run manuel créé à
+15:40, avant le refactor, relancé jusqu'à `try_number=8`, occupait
+l'unique créneau de `max_active_runs=1` et rejouait la version du DAG
+épinglée à sa création — d'où « 0 ligne » dans la tâche alors que le
+même appel rendait 632 lignes dans le même conteneur. Il s'est éteint à
+16:37:20. La file contient les reliquats des backfills 1 à 5.
+
+**Reprise :** `airflow backfill list`, supprimer les backfills obsolètes,
+purger les runs en `queued`, relancer une seule fois.
+
+**Quatre succès silencieux dans la même journée :** `charger` sans
+`return` (None, aucun job soumis), `job.output_rows` à None sur un
+WRITE_TRUNCATE avec décorateur, sept runs verts sans donnée, et le
+zombie vert en relance. Matière directe pour la question 3.
+
+**Blocage non résolu** : les runs de backfill sont créés (backfill_id 1 à 7)
+mais aucun ne s'exécute — ou s'exécute sans produire de fichier. Les cinq
+conteneurs sont sains, le scheduler tourne. Deux causes possibles à
+explorer demain :
+  - le scheduler ne ramasse pas les runs (état `queued` persistant) :
+    regarder les slots de pool et `max_active_runs`
+  - les runs s'exécutent et l'extraction rend 0 ligne : reprendre le log
+    d'une tâche `extract` d'un run de backfill récent, pas d'un run manuel
