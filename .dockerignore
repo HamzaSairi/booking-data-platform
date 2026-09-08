@@ -1,0 +1,6 @@
+.git
+.venv
+data
+state
+airflow/logs
+__pycache__

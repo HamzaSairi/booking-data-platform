@@ -100,92 +100,82 @@ def sauver_etat(table: str, etat: dict) -> None:
 
 
 # ─── Extraction ──────────────────────────────────────────────────────
-def extract_table(conn, table: str, watermark: datetime):
-    """Retourne (lignes, colonnes, nouveau_watermark) ou None si rien."""
-    borne = watermark - SAFETY_MARGIN
+    
+# ─── Extraction ──────────────────────────────────────────────────────
+def chemin_partition(table: str, debut: datetime) -> Path:
+    """Chemin déterministe : la même fenêtre écrit toujours le même fichier.
 
+    L'ancien nom horodaté sur l'heure d'exécution garantissait que « deux
+    exécutions le même jour ne s'écrasent pas » — c'était précisément le
+    défaut. Rejouer une fenêtre doit remplacer son fichier, pas en ajouter
+    un second à charger deux fois.
+    """
+    return DATA_DIR / table / f"dt={debut:%Y-%m-%d}" / f"part-{debut:%Y%m%dT%H%M%SZ}.parquet"
+
+
+def extract_table(conn, table: str, debut: datetime, fin: datetime):
+    """Retourne (lignes, colonnes) pour la fenêtre [debut, fin), ou None."""
     with conn.cursor() as cur:
         # f-string acceptable : `table` vient d'une liste codée en dur,
         # jamais d'une entrée utilisateur.
         cur.execute(
-            f"SELECT * FROM {table} WHERE updated_at > %s ORDER BY updated_at",
-            (borne,),
+            f"SELECT * FROM {table} "
+            "WHERE updated_at >= %(debut)s AND updated_at < %(fin)s "
+            "ORDER BY updated_at",
+            {"debut": debut, "fin": fin},
         )
         colonnes = [d.name for d in cur.description]
         lignes = cur.fetchall()
-
-    if not lignes:
-        return None
-
-    # Le nouveau watermark est le max RÉELLEMENT extrait, jamais now() :
-    # avec now(), tout ce qui est commité pendant l'exécution est perdu.
-    idx = colonnes.index("updated_at")
-    nouveau = max(ligne[idx] for ligne in lignes)
-
-    # Garde-fou : une source peut écrire un updated_at dans le futur (bug
-    # applicatif, horloge décalée, colonne technique dérivée d'une date
-    # métier). Le watermark le mémoriserait et ignorerait ensuite toutes les
-    # lignes réelles jusqu'à ce que l'horloge le rattrape — sans erreur.
-    maintenant = datetime.now(UTC)
-    if nouveau > maintenant:
-        print(f"  ! {table} : updated_at futur ({nouveau}), watermark plafonné")
-        nouveau = maintenant
-
-    return lignes, colonnes, nouveau
+    return (lignes, colonnes) if lignes else None
 
 
-def ecrire_parquet(table: str, lignes: list, colonnes: list[str]) -> Path:
+def ecrire_parquet(table: str, lignes: list, colonnes: list[str], debut: datetime) -> Path:
     donnees = {c: [ligne[i] for ligne in lignes] for i, c in enumerate(colonnes)}
     arrow = pa.table(donnees)
-
-    dt = datetime.now(UTC)
-    # Convention Hive dt=YYYY-MM-DD, comprise par BigQuery et dbt.
-    dossier = DATA_DIR / table / f"dt={dt:%Y-%m-%d}"
-    dossier.mkdir(parents=True, exist_ok=True)
-    # Horodatage dans le nom : deux exécutions le même jour ne s'écrasent pas.
-    chemin = dossier / f"part-{dt:%Y%m%dT%H%M%S%f}.parquet"
-
-    pq.write_table(arrow, chemin, compression="snappy")
+    chemin = chemin_partition(table, debut)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    # Écriture puis renommage : un plantage en cours d'écriture ne laisse
+    # jamais un Parquet tronqué à l'emplacement final.
+    tmp = chemin.with_suffix(".parquet.tmp")
+    pq.write_table(arrow, tmp, compression="snappy")
+    tmp.replace(chemin)
     return chemin
 
 
-def extract_one(table: str) -> list[str]:
-    """Extrait une table. Retourne les chemins relatifs écrits (0 ou 1)."""
-    etat = charger_etat(table)
+def extract_one(table: str, debut: datetime, fin: datetime) -> list[str]:
+    """Extrait la fenêtre [debut, fin). Retourne les chemins écrits (0 ou 1).
 
+    Fonction pure du couple (source, fenêtre) : aucun état lu, aucun état
+    écrit. Rejouer la même fenêtre réécrit le même fichier, reflétant
+    l'état ACTUEL de la source — y compris les lignes arrivées en retard.
+    """
     with connect() as conn:
-        identite = db_identity(conn)
-        if etat["db_id"] is None:
-            etat["db_id"] = identite
-        elif etat["db_id"] != identite:
-            raise RuntimeError(
-                f"L'état de {table} appartient à une autre base ({etat['db_id']}) "
-                f"que celle connectée ({identite}). La base a probablement été "
-                f"recréée par `down -v`. Supprime {fichier_etat(table)}."
-            )
-
-        wm = datetime.fromisoformat(etat["watermark"]) if etat["watermark"] else EPOCH
-        resultat = extract_table(conn, table, wm)
+        resultat = extract_table(conn, table, debut, fin)
 
     if resultat is None:
-        print(f"{table:>10} : 0 ligne")
+        # Une fenêtre vidée doit le rester : sinon un ancien fichier
+        # survivrait à la disparition de ses lignes en source.
+        chemin_partition(table, debut).unlink(missing_ok=True)
+        print(f"{table:>10} [{debut:%F}] : 0 ligne")
         return []
 
-    lignes, colonnes, nouveau = resultat
-
-    chemin = ecrire_parquet(table, lignes, colonnes)   # 1. écrire
-    etat["watermark"] = nouveau.isoformat()            # 2. avancer
-    sauver_etat(table, etat)                           # 3. persister
-
-    print(f"{table:>10} : {len(lignes):>5} lignes -> {rel(chemin)}")
+    lignes, colonnes = resultat
+    chemin = ecrire_parquet(table, lignes, colonnes, debut)
+    print(f"{table:>10} [{debut:%F}] : {len(lignes)} lignes -> {rel(chemin)}")
     return [rel(chemin)]
 
 
 # ─── Point d'entrée CLI ──────────────────────────────────────────────
-def run() -> None:
-    fichiers = [f for table in TABLES for f in extract_one(table)]
-    print(f"\n{len(fichiers)} fichier(s) écrit(s)")
+def run(debut: datetime, fin: datetime) -> None:
+    for table in TABLES:
+        extract_one(table, debut, fin)
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    import argparse
+
+    p = argparse.ArgumentParser(description="Extraction d'une fenêtre temporelle.")
+    p.add_argument("--debut", required=True, help="ISO 8601, ex. 2026-09-03T00:00:00+00:00")
+    p.add_argument("--fin", required=True)
+    a = p.parse_args()
+    run(datetime.fromisoformat(a.debut), datetime.fromisoformat(a.fin))

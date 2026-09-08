@@ -479,7 +479,75 @@ Deux règles retenues :
 - un secret écrit à deux endroits finit toujours par diverger. L'URI Airflow
   est désormais dérivée de POSTGRES_PASSWORD dans le compose.
 
-À réutiliser pour la question 3 d'entretien (« comment détectes-tu un échec
-silencieux ? ») : celui-ci était silencieux parce qu'un seul chemin d'accès
-était emprunté. La détection est venue de la diversité des clients, pas d'une
-alerte.
+## Jour 12 — Le DAG d'ingestion
+
+**Fait** : DAG `ingestion_batch`, quatre TaskGroups en parallèle
+(extract → validate → load), `schedule='@daily'`, `catchup=False`,
+`max_active_runs=1`. Image Airflow applicative construite depuis
+`airflow/Dockerfile`. Refactor complet de `ingestion/` : chemins ancrés
+sur la racine du dépôt, état partitionné par table, `extract_one` et
+`load_one`. Run complet en 25 s, `state=success`.
+
+**Ce que l'orchestration a révélé** — c'est le vrai contenu de la journée.
+Aucun des trois obstacles n'était un problème tant qu'un humain lançait
+les scripts : chemins relatifs au répertoire courant, état partagé entre
+quatre processus, dépendances absentes de l'image. L'orchestrateur ne les
+a pas créés, il les a exposés. À retenir comme grille de lecture : ce qui
+marche parce qu'un humain fait toujours la même chose est une hypothèse
+non écrite, et l'automatisation la révèle.
+
+**Temps perdu, et sur quoi** : environ une heure sur l'indentation du
+`docker-compose.yml`. Deux causes enchaînées — des clés (`profiles`,
+`depends_on`, `volumes`) sorties de l'ancre `x-airflow-common` par un
+décalage de deux espaces, et un extrait collé littéralement avec ses
+commentaires de position, qui a fait disparaître `FERNET_KEY` et
+`SQL_ALCHEMY_CONN`. Symptômes successifs : montages ignorés,
+`services.volumes not allowed`, puis `mapping key "volumes" already
+defined`. Aucun ne désignait la vraie cause.
+→ Réflexe pris : `docker compose config` après **chaque** édition du YAML,
+en routine et non en dépannage. YAML n'a aucune redondance syntaxique :
+un mauvais niveau d'indentation ne produit pas une erreur, il produit un
+fichier différent mais valide, qui échoue plus loin.
+
+**Deuxième perte de temps** : le nouveau code d'`extract.py` collé dans
+`__init__.py`. L'import réussissait (`ok`), donc j'ai cru le refactor
+appliqué. Un import réussi ne prouve que le chemin Python, jamais le
+contenu du module.
+→ Réflexe pris : vérifier ce qu'on va appeler, pas ce qu'on importe —
+`grep -n "def extract_one" ingestion/extract.py`. Coût nul, question close.
+
+**Diagnostic Airflow** : `dags test` est un mauvais outil de diagnostic de
+parse — il consomme le DagBag déjà construit et renvoie « could not be
+found », sans distinguer l'absence de l'erreur de parse. Les trois bonnes
+commandes : `dags list-import-errors`, `dags list`, et surtout
+`python /opt/airflow/dags/mon_dag.py`, qui court-circuite Airflow et donne
+la traceback complète en deux secondes.
+
+**Découverte à consigner — l'idempotence ne se mesure pas en octets.**
+Deux exécutions consécutives du DAG, source figée, aucun simulateur en
+cours : quatre fichiers Parquet écrits quand même. Cause : la
+`SAFETY_MARGIN` de 5 s fait relire à chaque passage toute ligne dont
+l'`updated_at` tombe juste avant le watermark. Sur `hotels`, dont le
+`max(updated_at)` égale exactement le watermark, la même ligne est
+réextraite indéfiniment.
+Chiffres en cible : **393 lignes brutes pour 50 hôtels distincts**,
+soit un facteur 7,9 sur la table la plus statique du modèle.
+Ce n'est pas un défaut, c'est le contrat at-least-once qui fonctionne :
+jamais de perte, doublons assumés, déduplication en aval.
+→ Formulation pour l'entretien (question 1) : *l'idempotence d'un
+pipeline ne se mesure pas au nombre d'octets écrits, mais à la stabilité
+de l'état observable en sortie.*
+
+**Piège Airflow appris** : une tâche qui lève `AirflowSkipException` n'écrit
+pas d'XCom, et la tâche suivante échoue alors à résoudre son argument
+(`XComArg ... is not found`). D'où le choix de faire skipper `load`, dont
+personne ne consomme la sortie, et de faire renvoyer une liste vide à
+`extract`.
+
+**À suivre** : `hotels` a un watermark au 30 août quand les trois autres
+sont à aujourd'hui. Ce n'est pas un retard, c'est une absence de
+changement — mais ça complique le test de fraîcheur du jour 28 : une
+table statique ne peut pas partager le seuil d'une table transactionnelle.
+
+**Reste à faire** : vérification de l'échec forcé sur `validate` via la
+conf `{"echec_validate": "bookings"}` dans l'interface.

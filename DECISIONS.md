@@ -469,7 +469,7 @@ Formulés avant implémentation, à confronter honnêtement même en cas d'erreu
 4. latence sous 5 secondes ;
 5. réconciliation : lignes actives en source == lignes actives en cible.
 
-## ADR-008 — Une base de métadonnées Airflow distincte de la base métier
+## ADR-015 — Une base de métadonnées Airflow distincte de la base métier
 
 **Date** : 2026-09-04
 **Statut** : accepté
@@ -561,3 +561,101 @@ production.
 Après l'incident de dérive du mot de passe survenu ce jour, l'URI est
 construite dans le compose à partir de `POSTGRES_PASSWORD` au lieu d'être
 écrite en clair : un secret ne doit exister qu'à un seul endroit.
+
+## ADR-016 — La bibliothèque d'ingestion reste ignorante d'Airflow
+
+**Contexte** : le jour 12 branche `ingestion/extract.py` et `ingestion/load.py`
+sur un DAG. Deux voies possibles : réécrire l'ingestion en tâches Airflow
+(hooks, opérateurs, Connections), ou garder `ingestion/` comme une
+bibliothèque Python autonome que le DAG se contente d'appeler.
+
+**Options** : (a) réécriture en composants Airflow, (b) bibliothèque
+autonome appelée depuis des tâches `@task`, (c) `BashOperator` invoquant
+les scripts en ligne de commande.
+
+**Décision** : (b). Le code d'ingestion n'importe rien d'Airflow ; sa
+configuration vient de l'environnement, `.env` en local et variables
+injectées par Compose côté orchestrateur. Le DAG n'apporte que le quand,
+le combien de fois et le quoi en cas d'échec.
+
+**Raison** : la bibliothèque reste testable par pytest sans orchestrateur,
+débogable à la main (`python ingestion/extract.py`), et portable si
+l'orchestrateur change. Le `BashOperator` aurait fonctionné mais fait
+transiter les erreurs par un code de sortie, sans traceback exploitable.
+
+**Coût assumé** : deux chemins d'accès à la même base coexistent — la
+Connection `postgres_source` du DAG `verif_source`, et les variables
+`POSTGRES_*` lues par la bibliothèque. Duplication délibérée : coupler
+l'ingestion à une Connection Airflow annulerait le bénéfice.
+
+**Date** : 2026-09-07
+
+---
+
+## ADR-017 — Un fichier d'état par table plutôt qu'un fichier unique
+
+**Contexte** : le DAG lance les quatre extractions en parallèle, une par
+TaskGroup. Les quatre processus appelaient `sauver_etat()` sur le même
+`state/watermarks.json` : chacun ayant chargé le dictionnaire complet au
+démarrage et réécrivant le fichier entier, le dernier écrivain écrasait
+les watermarks des trois autres tables. Perte de mise à jour classique,
+non déterministe, et silencieuse — le JSON produit reste valide.
+
+**Options** : (a) verrou de fichier, (b) sérialisation des quatre
+extractions, (c) partition de l'état en un fichier par table.
+
+**Décision** : (c). `state/watermarks/{table}.json` et
+`state/loaded/{table}.json`.
+
+**Raison** : supprimer le partage coûte moins cher que l'arbitrer. Un
+verrou aurait ajouté un mode de défaillance (verrou orphelin après un
+crash) ; la sérialisation aurait annulé le bénéfice du parallélisme.
+
+**Coût assumé** : quatre écritures au lieu d'une, et une migration
+ponctuelle de l'état existant. Cette partition ne tient que parce que
+la clé de découpage — la table — correspond exactement à l'unité de
+parallélisme. Un parallélisme par partition de date exigerait un autre
+schéma.
+
+**Note opérationnelle** : le fichier d'état est aussi critique que la
+donnée. Le perdre ne corrompt rien (l'idempotence protège), mais provoque
+un retraitement complet — vérifié en pratique ce jour : 30 000 lignes
+rechargées après une migration d'état ratée. À l'échelle du téraoctet,
+ce « rien de grave » se chiffre en heures de calcul. En production,
+l'état vit en base ou sur du stockage objet versionné, jamais dans un
+fichier local. Reporté dans docs/limites.md.
+
+**Date** : 2026-09-07
+
+---
+
+## ADR-018 — Relances sur l'I/O, échec immédiat sur la qualité
+
+**Contexte** : le plan demande `retries=3` avec délai exponentiel. Appliqué
+uniformément, ce réglage relance aussi les échecs de validation de données.
+
+**Options** : (a) politique unique pour toutes les tâches, (b) distinction
+entre erreurs transitoires et erreurs de données.
+
+**Décision** : (b). `retries=3`, `retry_delay=30s`, backoff exponentiel
+plafonné à 10 min en `default_args` ; la tâche `validate` lève
+`AirflowFailException`, qui court-circuite les relances.
+
+**Raison** : une relance a du sens face à un Postgres qui redémarre ou un
+quota BigQuery momentané. Elle n'en a aucune face à une clé primaire nulle
+ou un `updated_at` dans le futur : la donnée est identique aux trois
+tentatives. Relancer ne fait que retarder l'alerte de sept minutes.
+
+**Coût assumé** : un lot rejeté est mis en quarantaine — le Parquet reste
+sur disque, le watermark a déjà avancé, et le fichier n'entre pas au
+manifeste. Aucune reprise automatique ne le rattrapera, puisque `load` ne
+reçoit que ce que `validate` du même run a laissé passer. C'est délibéré :
+une donnée jugée invalide ne doit pas entrer par la porte de derrière.
+La procédure de reprise est une décision humaine — runbook du jour 14.
+
+hotels,393,150
+customers,4553,1975
+bookings,16876,7070
+payments,14410,5805
+
+**Date** : 2026-09-07
