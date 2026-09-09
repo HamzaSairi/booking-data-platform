@@ -4,7 +4,7 @@ Un TaskGroup par table, les quatre en parallèle : extract -> validate -> load.
 Le DAG n'implémente rien, il appelle la bibliothèque `ingestion/` et se
 charge du quand, du combien de fois, et du quoi en cas d'échec.
 
-Chaque run traite la fenêtre [data_interval_start, data_interval_end).
+Chaque run traite la fenêtre [logical_date, logical_date + FENETRE).
 Aucune tâche ne consulte l'heure courante : c'est la condition du backfill.
 """
 
@@ -24,6 +24,13 @@ CLES = {
     "payments": "payment_id",
 }
 
+# Airflow 3.3 ne renseigne plus data_interval_end sur un DAG cron : les
+# deux bornes valent la date logique, et une fenêtre nulle n'extrait rien
+# — au vert, sans erreur. On dérive donc la fenêtre du schedule.
+# Couplage assumé : changer `schedule` sans changer FENETRE casse
+# silencieusement le pipeline.
+FENETRE = timedelta(days=1)
+
 DEFAUTS = {
     # 3 relances, délai doublant à chaque échec : 30 s, 1 min, 2 min.
     # Dimensionné pour l'indisponibilité passagère (base qui redémarre,
@@ -35,6 +42,14 @@ DEFAUTS = {
 }
 
 
+def fenetre(ctx) -> tuple:
+    """Bornes [debut, fin) du run. Source unique pour les trois tâches :
+    un calcul divergent entre extract et validate ferait rejeter des
+    données pourtant correctes."""
+    debut = ctx["logical_date"]
+    return debut, debut + FENETRE
+
+
 @dag(
     dag_id="ingestion_batch",
     schedule="@daily",
@@ -43,7 +58,8 @@ DEFAUTS = {
     # Les partitions étant indépendantes, deux runs concurrents ne se
     # corrompent plus. On reste à 1 pour ménager Postgres et les quotas
     # de load jobs pendant un backfill : c'est une limite de débit,
-    # plus une limite de correction.
+    # plus une limite de correction. Contrepartie constatée : un seul run
+    # malade paralyse le DAG entier (ADR-014).
     max_active_runs=1,
     default_args=DEFAUTS,
     tags=["ingestion", "batch"],
@@ -61,10 +77,8 @@ def ingestion_batch():
             # chaque parse du fichier par le dag-processor.
             from ingestion.extract import extract_one
 
-            ctx = get_current_context()
-            return extract_one(
-                table, ctx["data_interval_start"], ctx["data_interval_end"]
-            )
+            debut, fin = fenetre(get_current_context())
+            return extract_one(table, debut, fin)
 
         @task(task_id="validate")
         def validate(table: str, fichiers: list[str]) -> list[str]:
@@ -77,6 +91,7 @@ def ingestion_batch():
             from datetime import UTC
 
             import pyarrow.parquet as pq
+
             from ingestion.extract import RACINE
 
             ctx = get_current_context()
@@ -91,8 +106,7 @@ def ingestion_batch():
                 print(f"{table} : rien à valider")
                 return []
 
-            debut = ctx["data_interval_start"]
-            fin = ctx["data_interval_end"]
+            debut, fin = fenetre(ctx)
 
             def aware(d):
                 # Un timestamp Postgres sans fuseau ressort naïf de pyarrow
@@ -141,8 +155,8 @@ def ingestion_batch():
             if not fichiers:
                 raise AirflowSkipException(f"{table} : aucun fichier à charger")
 
-            ctx = get_current_context()
-            return load_one(table, fichiers, ctx["data_interval_start"])
+            debut, _ = fenetre(get_current_context())
+            return load_one(table, fichiers, debut)
 
         load(table, validate(table, extract(table)))
 

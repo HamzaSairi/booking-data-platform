@@ -659,3 +659,129 @@ bookings,16876,7070
 payments,14410,5805
 
 **Date** : 2026-09-07
+
+## ADR-018 — L'état du pipeline passe du disque à l'ordonnanceur
+
+**Contexte** : l'extraction du jour 7 était pilotée par un watermark
+persisté dans `state/watermarks/{table}.json`. Ce marqueur répond à la
+question « qu'ai-je déjà traité ». Le backfill en pose une autre : « que
+couvre cette exécution ». Les deux sont incompatibles — rejouer le
+1ᵉʳ septembre avec un watermark au 8 extrait zéro ligne, et sept runs
+concurrents se disputent un état global unique.
+
+**Options** : (a) conserver le watermark et paramétrer manuellement les
+rejeux, (b) un watermark par intervalle, (c) extraction par fenêtre
+`[data_interval_start, data_interval_end)` et suppression de l'état local.
+
+**Décision** : (c). `extract_one(table, debut, fin)` devient une fonction
+pure du couple (source, fenêtre). `state/watermarks/` est supprimé, ainsi
+que `db_identity()` — le garde-fou contre un état hérité d'une base
+détruite n'a plus d'objet puisqu'il n'y a plus rien à hériter.
+
+**Raison** : Airflow tient déjà le registre des intervalles exécutés dans
+sa table `dag_run`. Dupliquer cette information sur disque crée deux
+sources de vérité qui divergeront. L'option (b) revenait à réimplémenter
+mal ce que l'ordonnanceur fait bien.
+
+**Coût assumé** : le pipeline n'est plus exécutable sans bornes explicites
+— `python ingestion/extract.py` exige désormais `--debut/--fin`. Et la
+marge de sécurité de 5 secondes du jour 7, qui rattrapait les transactions
+longues datées avant leur commit, n'a plus d'équivalent : la reculer
+ferait remonter des lignes de l'intervalle précédent dans la partition
+courante. Le résidu est reporté au CDC (sprint 5).
+
+**Note d'implémentation** : le contrôle de `validate` change de nature au
+passage. Il vérifiait que `updated_at` n'était pas dans le futur —
+assertion sur une source non maîtrisée, et dont le verdict dépendait de
+l'heure d'exécution. Il vérifie maintenant que toutes les lignes tombent
+dans `[debut, fin)` : c'est une post-condition sur notre propre
+extracteur, donc reproductible. Une ligne hors bornes signale un bug de
+clause WHERE, pas une donnée sale.
+
+**Date** : 2026-09-08
+
+---
+
+## ADR-019 — Idempotence par écrasement de partition, non par manifeste
+
+**Contexte** : le chargement du jour 8 tenait un manifeste
+`state/loaded/{table}.json` des fichiers déjà envoyés, et écrivait en
+`WRITE_APPEND` dans des tables partitionnées sur `_ingested_at`. Ferme
+l'ADR-005 du jour 9, laissé ouvert entre MERGE et écrasement.
+
+**Options** : (a) MERGE sur clé primaire, (b) manifeste conservé,
+(c) écrasement de partition sur la date logique.
+
+**Décision** : (c). Ajout d'une colonne `_interval_start` (DATE), qui
+devient la clé de partitionnement. Chaque fenêtre écrit en
+`WRITE_TRUNCATE` sur le décorateur `table$YYYYMMDD`. Le manifeste et
+`state/loaded/` sont supprimés.
+
+**Raison** : le manifeste est une idempotence *par mémoire* — il refuse de
+recharger un fichier déjà vu. Deux défauts rédhibitoires : il ne survit
+pas à la perte de l'état, et il rejette une fenêtre ré-extraite enrichie
+de données arrivées en retard. L'écrasement est une idempotence *par
+construction* : le contenu d'une partition ne dépend que des fichiers de
+sa fenêtre. Le MERGE aurait fonctionné mais coûte un scan de la table
+cible à chaque exécution, là où le load job reste gratuit.
+
+Le partitionnement sur `_ingested_at` était par ailleurs incompatible
+avec le rejeu : deux exécutions de la même fenêtre à deux jours
+d'intervalle atterrissaient dans deux partitions distinctes. `_ingested_at`
+est conservée comme métadonnée d'audit — c'est le seul `now()` légitime
+du pipeline — mais ne porte plus le partitionnement.
+
+**Bénéfice non anticipé** : BigQuery refuse un load job dont une ligne
+tombe hors de la partition visée par le décorateur. Garde-fou gratuit
+contre une erreur de bornes dans l'extracteur.
+
+**Coût assumé** : une fenêtre redevenue vide ne peut pas être écrasée —
+un load job sans données n'existe pas, et la tâche `load` lève
+`AirflowSkipException`. La partition conserve alors un état périmé. Le
+cas ne survient qu'après une suppression physique en source, ce qui est
+précisément la limite mesurée au jour 10 et la troisième pièce du dossier
+justifiant le CDC.
+
+**Contraintes techniques rencontrées** : `schema_update_options` n'est
+accepté qu'avec `WRITE_APPEND`, ou avec `WRITE_TRUNCATE sur une
+partition` — jamais à la création d'une table, faire évoluer un schéma
+supposant un schéma préexistant. D'où deux régimes dans `charger()` :
+amorçage (table nue, partitionnement et clustering déclarés) et régime
+normal (décorateur, évolution de schéma autorisée). Par ailleurs
+`job.output_rows` n'est pas renseigné sur un WRITE_TRUNCATE avec
+décorateur ; le compte du Parquet fait foi puisque `job.result()` n'a pas
+levé.
+
+**Date** : 2026-09-08
+
+---
+
+## ADR-020 — Un run Airflow est lié à une version du code
+
+**Contexte** : quatre backfills successifs ont été créés sans produire un
+seul fichier, tandis que le même appel réussissait à la main dans le même
+conteneur. Cause : un run manuel créé à 15:40, avant le refactor
+d'`extract.py`, relancé automatiquement jusqu'à `try_number=8` par la
+politique de retry de l'ADR-010, et rejouant la version du DAG épinglée à
+sa création (`dag_version_id`). Avec `max_active_runs=1`, ce run occupait
+l'unique créneau et bloquait tous les runs de backfill.
+
+**Ce qui est retenu** : rejouer un ancien run ne teste pas le code
+actuel. Après toute modification de `ingestion/`, il faut créer de
+nouveaux runs, pas relancer les anciens — et purger les runs en vol avant
+un backfill.
+
+**Décision** : conserver `max_active_runs=1` malgré le blocage constaté.
+Les partitions étant désormais indépendantes, la correction n'exige plus
+la sérialisation ; mais un backfill de sept jours lancerait sinon vingt-
+huit extractions Postgres et autant de load jobs en parallèle. C'est une
+limite de débit délibérée, plus une limite de correction — et l'ADR-010
+en devient le corollaire dangereux : une tâche en échec permanent
+transforme cette limite en blocage global.
+
+**À traiter au jour 14** : ce blocage doit être détectable. Un run dont
+la durée dépasse largement l'ordinaire, ou un `try_number` élevé, sont
+les signaux à instrumenter. Entrée de runbook : « aucun run de backfill
+ne démarre » → vérifier les runs en cours avant toute autre hypothèse.
+
+**Date** : 2026-09-08
