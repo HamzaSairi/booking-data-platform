@@ -666,3 +666,81 @@ compte les relances, l'échec final s'écrit tentative 10 / relances_max 9.
   pas mesuré.
 - Le nouveau plafond de 2 min n'est pas encore mesuré.
 - S2 (quota BigQuery) jamais exécuté, marqué comme tel dans le runbook.
+
+## Jour 15 — Revue de sprint 3 (1/2) : expérience C, Postgres gelé
+
+**Prédiction réfutée.** Attendu : `docker compose pause` bloque la tâche
+indéfiniment, sans relance ni callback. Observé : chaque tentative échoue
+après 130,3 s sur `ConnectionTimeout`, puis est relancée. Deux relevés
+`running` portaient des `start_date` différentes : c'étaient deux
+tentatives. Un état seul ne dit rien, la `start_date` identifie la
+tentative.
+
+**Un timeout que personne n'avait choisi.** 130 s, c'est
+`_DEFAULT_CONNECT_TIMEOUT` de psycopg 3.3.4, une constante privée.
+Détection en 14 min 43 s, contre ~6 min annoncées par l'ADR-018, qui
+ignorait la durée des tentatives en échec. Formule vérifiée :
+`(retries + 1) × durée d'une tentative + retries × délai`.
+
+**Faux négatif du runbook.** Les 4 lignes étaient classées `null`.
+`ConnectionTimeout` hérite d'`OperationalError`, mais `classer()` compare
+un nom, pas une classe. Le test du jour 14 fabriquait une
+`OperationalError("timeout expired")` : l'exception qu'on imaginait, pas
+celle que psycopg lève.
+
+**Correction (ADR-020).** `connect_timeout=10` dans `extract.py`,
+signature `S1b` dans `classer()`, test aligné sur l'exception réelle.
+Vérifié avant de mesurer : le conteneur exécute bien le code modifié
+(`/opt/airflow/project/ingestion`).
+
+**Re-mesure.**
+
+| | Défaut (130 s) | `connect_timeout` 10 s |
+|---|---|---|
+| Tentative en échec | 130,3 s | 10,3 s |
+| Délai de relance | 2 min 00 s | 2 min 01 s |
+| Détection | 14 min 43 s | 6 min 44 s (prédit : 6 min 43 s) |
+| Reprise (échec → run vert) | 4 min 20 s | 3 min 05 s |
+| Incident total | 19 min 03 s | 9 min 49 s |
+| Classement | `null` | `S1b` |
+
+Détection calculée depuis le journal seul : horodatage de la première
+ligne moins sa durée, jusqu'à la ligne `echec`. Reprise et total vont
+jusqu'à la `end_date` du run. L'incident total est divisé par 2. Les
+délais de relance forment près de 90 % de la détection restante : le
+prochain levier est `retries` ou le plafond, et non plus le timeout.
+
+**Reprises.** Jour 14 : 4 min 25 s. Expérience C : 4 min 20 s, dont 9 s
+de rejeu. Re-mesure : 3 min 05 s, dont 2 min 25 s avant le `unpause`. La
+reprise reste entre 3 et 4 min 30 s alors que le rejeu prend quelques
+secondes : c'est du temps humain, un argument pour une vraie alerte
+(jour 28) plutôt que pour un pipeline plus rapide.
+
+**try_number, troisième confirmation.** Tentatives 12 à 15, puis 17 à 20 ;
+`relances_max` vaut la dernière tentative avant le `clear` plus 3.
+
+**Trouvé en chemin.**
+- `tasks clear -t` filtre par sous-chaîne littérale : `^bookings\.` et
+  `b.okings` ne trouvent rien, `bookings.` trouve les 3 tâches. Le premier
+  lancement de l'expérience n'a rien nettoyé, sans aucun message.
+- Un `clear` sans tâche correspondante rend la main en silence.
+- Une tâche `upstream_failed` affiche les dates de sa dernière exécution
+  réelle.
+- La fin d'une reprise se prouve par la `end_date` de `list-runs`, pas par
+  un `date` lancé à la main après le `clear`.
+- La commande `pytest` nue ne trouvait pas `simulator` (collecte
+  interrompue) ; depuis quand, non établi. Racine ajoutée au `pythonpath`
+  de `pyproject.toml`, `tests/conftest.py` supprimé.
+- `tests/test_idempotence.py` n'existe pas, alors qu'il était la preuve
+  du jour 9.
+- venv de l'hôte en Python 3.12, conteneur en 3.13 : les tests ne
+  tournent pas sur l'interpréteur de production (à régler en CI, jour 27).
+- `extract.py` lit les variables `POSTGRES_*` : la Connection Airflow
+  `postgres_source` n'est probablement lue par aucune tâche d'ingestion.
+
+**Non fait.**
+- `execution_timeout` reporté (ADR-020) : un gel en pleine requête n'est
+  pas couvert.
+- S1 (Postgres arrêté) pas re-mesuré avec le plafond de 2 min.
+- `tests/test_extract.py` (jour 7) : vérifier s'il teste encore le
+  watermark supprimé au jour 13.
