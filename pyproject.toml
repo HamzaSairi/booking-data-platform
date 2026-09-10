@@ -14,3 +14,4 @@ markers = [
     "bigquery: interroge BigQuery (lent, scanne des octets, effets de bord)",
 ]
 addopts = "-q -m 'not bigquery'"
+pythonpath = [".", "airflow/dags"]
