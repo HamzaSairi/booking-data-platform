@@ -584,3 +584,85 @@ explorer demain :
     regarder les slots de pool et `max_active_runs`
   - les runs s'exécutent et l'extraction rend 0 ligne : reprendre le log
     d'une tâche `extract` d'un run de backfill récent, pas d'un run manuel
+
+## Jour 13 — idempotence temporelle : démontré
+
+Backfill de 8 intervalles (2026-09-01 → 09-08), joué deux fois.
+Distribution identique aux deux passages, et conforme à la source :
+1, 255, 632, 311, 301, 310, 762, 190. Total 2 762.
+Doublons sur (booking_id, updated_at) : 0.
+
+
+## Jour 14 — callbacks, runbook et pannes réelles
+
+**Livré.** Callbacks de relance et d'échec via `default_args`, dans
+`airflow/dags/commun/callbacks.py` : pas d'import d'Airflow, 10 tests.
+Chaque relance ou échec écrit une ligne JSON dans
+`logs/pipeline/evenements.jsonl` et dans le log de la tâche, avec un renvoi
+au runbook. `docs/runbook.md` couvre trois scénarios : S1 Postgres
+injoignable, S2 BigQuery refuse le chargement, S3 intervalle vert mais
+cible fausse.
+
+**Le scénario 3 du plan n'existait plus.** « Watermark corrompu » supposait
+un watermark, supprimé au jour 13. Remplacé par l'incident équivalent :
+Airflow dit « fait », la cible dit autre chose. C'est le seul que les
+callbacks ne voient pas.
+
+**Accrocs d'installation.** Dossier créé sous le nom `commum` au lieu de
+`commun` (ModuleNotFoundError). Fichiers `*:Zone.Identifier` laissés par
+la copie depuis Windows, supprimés et ajoutés au .gitignore.
+
+**Bug révélé par le journal lui-même.** Un run déclenché sans
+`--logical-date` n'a pas de date logique en Airflow 3 : `fenetre()` levait
+KeyError, relancé trois fois pour rien (~5 min). Le journal l'a signalé
+avec `scenario_runbook: null`. Corrigé en AirflowFailException : le run
+échoue en 1,3 s (ADR-019). Erreur de manipulation dans la foulée :
+`dags trigger --logical-date` sur le 05/09, déjà couvert par un run →
+UniqueViolation sur (dag_id, logical_date).
+
+**Expérience A — panne courte.** Postgres arrêté, run du 03/09 rejoué,
+Postgres redémarré après la première relance. 4 relances classées S1,
+run vert. Message réel : `failed to resolve host 'postgres': [Errno -2]
+Name or service not known` (conteneur retiré du réseau Docker). Le run est
+vert malgré la panne : sans les lignes « relance », aucune trace. Il a
+pourtant mis 10 min 11 s à reprendre, Postgres revenu depuis longtemps :
+premier signe du plafond de relance, pas compris sur le moment.
+
+**Expérience B — panne longue.** Panne à 10:11:43 UTC, Postgres laissé
+arrêté.
+- Relances en tentatives 7, 8, 9, échec en tentative 10 à 10:41:55, les
+  4 tables à la même seconde. Cumul avec A : 16 relances, 4 échecs, comme
+  prédit.
+- try_number est cumulé à travers les clear (A en 5-6, B en 7-10). Le
+  clear fixe max_tries à dernière tentative + retries (6 + 3 = 9) :
+  chaque reprise garde 4 tentatives.
+- Délai mesuré entre relances : 10 min 02 s. Le commentaire de DEFAUTS
+  annonçait 30 s, 1 min, 2 min : c'est le plafond max_retry_delay
+  (30 s × 2^6, écrêté à 10 min). Le commentaire n'était vrai que pour un
+  run neuf.
+- Partition BigQuery du 03/09 pendant la panne : 632, identique à la
+  référence. Données retardées, pas perdues.
+- Reprise par la procédure S1 : run en success, `--only-failed` a bien
+  inclus les upstream_failed, source = cible = 632 à 10:46:20.
+
+**Le chiffre du jour.** Détection 30 min 12 s, résolution 4 min 25 s,
+incident total 34 min 37 s : 87 % de l'incident, c'est de la détection.
+La reprise est rapide grâce à l'idempotence du jour 13. La détection est
+lente à cause d'un plafond jamais mesuré, et elle l'est justement pour les
+tâches en reprise d'incident (ADR-018).
+
+**Ce que l'égalité ne prouvait pas.** Source = cible = 632 après la reprise
+ne prouvait rien à elle seule : le simulateur était arrêté et la partition
+valait déjà 632 avant la panne. La preuve est l'état success du run, avec
+une fin postérieure à l'échec.
+
+**Callback amélioré en cours de route.** « tentative 7, retries 3 » était
+illisible : ajout de `relances_max` (`ti.max_tries`). Mesuré : max_tries
+compte les relances, l'échec final s'écrit tentative 10 / relances_max 9.
+
+**Non fait.**
+- Expérience C (Postgres gelé par `docker compose pause`) et timeouts :
+  reportés. Pas de décision sur les timeouts tant que le blocage n'est
+  pas mesuré.
+- Le nouveau plafond de 2 min n'est pas encore mesuré.
+- S2 (quota BigQuery) jamais exécuté, marqué comme tel dans le runbook.

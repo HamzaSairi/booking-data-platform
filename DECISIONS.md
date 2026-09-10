@@ -660,7 +660,7 @@ payments,14410,5805
 
 **Date** : 2026-09-07
 
-## ADR-018 — L'état du pipeline passe du disque à l'ordonnanceur
+## ADR-019 — L'état du pipeline passe du disque à l'ordonnanceur
 
 **Contexte** : l'extraction du jour 7 était pilotée par un watermark
 persisté dans `state/watermarks/{table}.json`. Ce marqueur répond à la
@@ -702,7 +702,7 @@ clause WHERE, pas une donnée sale.
 
 ---
 
-## ADR-019 — Idempotence par écrasement de partition, non par manifeste
+## ADR-020 — Idempotence par écrasement de partition, non par manifeste
 
 **Contexte** : le chargement du jour 8 tenait un manifeste
 `state/loaded/{table}.json` des fichiers déjà envoyés, et écrivait en
@@ -756,7 +756,7 @@ levé.
 
 ---
 
-## ADR-020 — Un run Airflow est lié à une version du code
+## ADR-021 — Un run Airflow est lié à une version du code
 
 **Contexte** : quatre backfills successifs ont été créés sans produire un
 seul fichier, tandis que le même appel réussissait à la main dans le même
@@ -785,3 +785,82 @@ les signaux à instrumenter. Entrée de runbook : « aucun run de backfill
 ne démarre » → vérifier les runs en cours avant toute autre hypothèse.
 
 **Date** : 2026-09-08
+
+## ADR-022 — La fenêtre est dérivée du schedule, non de data_interval.
+Airflow 3.3 renseigne data_interval_start == data_interval_end sur un DAG à schedule cron. Une extraction bornée par ces deux valeurs ne rend jamais rien, sans erreur : huit runs verts, zéro octet. Fenêtre calculée comme [logical_date, logical_date + FENETRE) par une fonction unique partagée par les trois tâches — un calcul divergent entre extract et validate ferait rejeter des données correctes. Coût : FENETRE doit rester cohérente avec schedule à la main.
+
+## ADR-023 — L'amorçage d'une table n'est pas idempotent sous concurrence. 
+
+load_one teste l'existence de la table puis charge : ces deux opérations ne sont pas atomiques. Huit runs de backfill lancés simultanément — max_active_runs du DAG ne s'applique pas à un backfill, qui a sa propre limite — ont tous reçu NotFound et écrit en WRITE_TRUNCATE sur la table nue, se détruisant mutuellement : quatre partitions sur huit ont survécu. Parade immédiate : --max-active-runs 1 sur le backfill, et pré-création des tables. Parade durable : sortir la création de table du pipeline et la confier à Terraform (jour 26).
+
+## ADR-024 — Callbacks : journal JSONL local plutôt qu'une notification
+
+**Contexte** : les relances et échecs de tâches doivent laisser une trace
+exploitable. Jusqu'ici, seul l'état dans l'UI en gardait une, et les
+relances réussies n'en laissaient aucune.
+**Options** : (a) email SMTP d'Airflow, (b) webhook Slack, (c) une ligne
+JSON par événement dans un fichier partagé, doublée dans le log de tâche.
+**Décision** : (c), via `default_args`, module
+`airflow/dags/commun/callbacks.py`.
+**Raison** :
+- Aucun service externe ni secret à configurer.
+- Format lisible par une machine : ce sera la base de `pipeline_metrics`
+  au jour 28.
+- Le module n'importe pas Airflow et se teste hors conteneur. C'est
+  nécessaire : Airflow avale les exceptions d'un callback, un callback
+  cassé serait invisible.
+- Les relances sont journalisées aussi : dans l'expérience A, un run est
+  resté vert malgré une panne, et elles en sont la seule trace.
+- Chaque ligne porte un `scenario_runbook` ; `null` signale un incident
+  non couvert, et c'est ce qui a révélé le bug de l'ADR-019.
+**Coût** : personne n'est prévenu, il faut aller lire le journal, ce qui
+serait inacceptable en production. Les callbacks ne voient ni un run
+bloqué, ni un run vert dont la cible est fausse (S3).
+**Date** : 2026-09-10
+
+## ADR-025 — Le plafond de relance fixe la latence de détection
+
+**Contexte** : configuration initiale de 3 relances à 30 s, backoff
+exponentiel, plafond 10 min, commentée « 30 s, 1 min, 2 min ». Mesuré
+lors de l'expérience B :
+- 10 min 02 s entre chaque relance ;
+- échec définitif 30 min 12 s après le début de la panne.
+Cause : try_number est cumulé à travers les clear. En tentative 7, le
+délai calculé vaut 30 s × 2^6 = 32 min, écrêté à 10 min.
+**Options** : (a) garder 10 min, (b) abaisser le plafond, (c) supprimer
+le backoff exponentiel.
+**Décision** : (b), `max_retry_delay` = 2 min. Latence de détection
+maximale d'environ 6 min.
+**Raison** :
+- Les tâches les plus lentes à signaler leur échec sont celles qu'on
+  vient de rejouer, donc celles d'une reprise d'incident : le pire moment
+  pour attendre.
+- 2 min couvrent les pannes que des relances peuvent absorber (Postgres
+  qui redémarre, limite de débit BigQuery). Contre un quota (S2b), aucune
+  relance rapide ne sert.
+- Une panne plus longue doit devenir un échec vite, puisque la reprise
+  est une commande sans risque (4 min 25 s mesurées).
+- (c) rejeté : le backoff reste utile pour espacer les tentatives d'un
+  run neuf, c'est le plafond seul qui posait problème.
+**Coût** : une indisponibilité de plus de ~6 min passe en échec et
+demande une reprise manuelle. Nouvelle valeur pas encore mesurée.
+**Date** : 2026-09-10
+
+## ADR-026 — Un run sans logical_date échoue immédiatement, sans repli
+
+**Contexte** : en Airflow 3, `dags trigger` sans `--logical-date` crée un
+run dont la date logique est nulle. `fenetre()` levait KeyError, traité
+comme une erreur transitoire : 3 relances, ~5 min perdues.
+**Options** : (a) repli sur l'heure de déclenchement (`run_after`),
+(b) AirflowFailException explicite.
+**Décision** : (b).
+**Raison** :
+- (a) est un now() déguisé : la fenêtre dépendrait du moment du
+  déclenchement, ce qui casse le backfill (jour 13).
+- Une erreur déterministe ne doit pas consommer de relances. Mesuré :
+  échec du run en 1,3 s au lieu de ~5 min.
+- Règle associée dans le runbook : tout déclenchement manuel se fait avec
+  `--logical-date` sur une date sans run ; retraiter un intervalle
+  existant passe par `tasks clear` ou `backfill create`.
+**Coût** : tout déclenchement sans date échoue. C'est voulu.
+**Date** : 2026-09-10
