@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 SIGNATURES: list[tuple[str, str]] = [
     ("rate limits", "S2a"),  # BigQuery, limite court terme
     ("quota exceeded", "S2b"),  # BigQuery, quota long terme
-    ("operationalerror", "S1"),  # psycopg : connexion impossible
+    ("connectiontimeout", "S1b"),  # psycopg : serveur muet (gelé, saturé)
+    ("operationalerror", "S1"),  # psycopg : connexion refusée
 ]
 
 

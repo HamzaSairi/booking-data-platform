@@ -61,7 +61,7 @@ def test_echec_ecrit_une_ligne_complete(journal):
 
 
 def test_les_evenements_s_ajoutent_sans_ecraser(journal):
-    exc = exception("OperationalError", "timeout expired")
+    exc = exception("ConnectionTimeout", "connection timeout expired")
     sur_relance(contexte(exc, tentative=1))
     sur_relance(contexte(exc, tentative=2))
     sur_echec(contexte(exc, tentative=4))
@@ -85,6 +85,7 @@ def test_les_evenements_s_ajoutent_sans_ecraser(journal):
             ),
             "S2b",
         ),
+        (exception("ConnectionTimeout", "connection timeout expired"), "S1b"),
         (exception("AirflowFailException", "doublons sur booking_id"), None),
         (None, None),
     ],
