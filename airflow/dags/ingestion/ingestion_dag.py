@@ -15,6 +15,7 @@ from datetime import timedelta
 import pendulum
 from airflow.exceptions import AirflowFailException, AirflowSkipException
 from airflow.sdk import dag, get_current_context, task, task_group
+from commun.callbacks import sur_echec, sur_relance
 
 # Clé primaire de chaque table, utilisée par les contrôles de validation.
 CLES = {
@@ -32,13 +33,14 @@ CLES = {
 FENETRE = timedelta(days=1)
 
 DEFAUTS = {
-    # 3 relances, délai doublant à chaque échec : 30 s, 1 min, 2 min.
-    # Dimensionné pour l'indisponibilité passagère (base qui redémarre,
-    # quota BigQuery momentané), pas pour un bug de code.
     "retries": 3,
     "retry_delay": timedelta(seconds=30),
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=10),
+    # Journal JSONL des incidents, voir docs/runbook.md. Via default_args,
+    # s'applique aux douze tâches sans les toucher une à une.
+    "on_retry_callback": sur_relance,
+    "on_failure_callback": sur_echec,
 }
 
 
@@ -46,7 +48,15 @@ def fenetre(ctx) -> tuple:
     """Bornes [debut, fin) du run. Source unique pour les trois tâches :
     un calcul divergent entre extract et validate ferait rejeter des
     données pourtant correctes."""
-    debut = ctx["logical_date"]
+    debut = ctx.get("logical_date")
+    if debut is None:
+        # Airflow 3 : un run déclenché sans --logical-date n'en a pas.
+        # Aucun repli sur l'heure de déclenchement (un now() déguisé) ;
+        # erreur déterministe, donc pas de relance.
+        raise AirflowFailException(
+            "Run sans logical_date : fenêtre indéfinie. "
+            "Déclencher avec --logical-date AAAA-MM-JJT00:00:00+00:00."
+        )
     return debut, debut + FENETRE
 
 
