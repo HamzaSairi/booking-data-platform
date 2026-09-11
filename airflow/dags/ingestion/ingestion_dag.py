@@ -13,8 +13,9 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pendulum
-from airflow.exceptions import AirflowFailException, AirflowSkipException
 from airflow.sdk import dag, get_current_context, task, task_group
+from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
+from airflow.timetables.interval import CronDataIntervalTimetable
 from commun.callbacks import sur_echec, sur_relance
 
 # Clé primaire de chaque table, utilisée par les contrôles de validation.
@@ -39,7 +40,7 @@ DEFAUTS = {
     # Détection ≈ (retries + 1) × durée d'une tentative en échec
     #             + retries × max_retry_delay
     # soit 6 min 44 s mesurées si la connexion expire (S1b, connect_timeout
-    # 10 s), ≈ 6 min prévues si l'échec est immédiat (S1). ADR-018, ADR-020.
+    # 10 s), ≈ 6 min prévues si l'échec est immédiat (S1). ADR-025, ADR-027.
     "retries": 3,
     "retry_delay": timedelta(seconds=30),
     "retry_exponential_backoff": True,
@@ -64,12 +65,21 @@ def fenetre(ctx) -> tuple:
             "Run sans logical_date : fenêtre indéfinie. "
             "Déclencher avec --logical-date AAAA-MM-JJT00:00:00+00:00."
         )
-    return debut, debut + FENETRE
+    fin = debut + FENETRE
+    # Garde-fou (ADR-028) : l'horloge sert à refuser, jamais à calculer
+    # la fenêtre. Une fenêtre non close donnerait un run vert et incomplet.
+    if fin > pendulum.now("UTC"):
+        raise AirflowFailException(
+            f"Fenêtre [{debut}, {fin}) non close : extraction refusée."
+        )
+    return debut, fin
 
 
 @dag(
     dag_id="ingestion_batch",
-    schedule="@daily",
+    # Le run d'une journée part à sa fin (ADR-028). Avec "@daily" seul,
+    # Airflow 3 le déclenche à son début : il lirait une journée à venir.
+    schedule=CronDataIntervalTimetable("@daily", timezone="UTC"),
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
     catchup=True,           # les intervalles manquants sont rattrapés
     # Les partitions étant indépendantes, deux runs concurrents ne se
