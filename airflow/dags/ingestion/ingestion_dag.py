@@ -33,10 +33,17 @@ CLES = {
 FENETRE = timedelta(days=1)
 
 DEFAUTS = {
+    # 3 relances, délai ≈ retry_delay × 2^(tentative − 1) plafonné par
+    # max_retry_delay. try_number est cumulé à travers les clear (jour 14) :
+    # une tâche déjà rejouée atteint le plafond dès sa première relance.
+    # Détection ≈ (retries + 1) × durée d'une tentative en échec
+    #             + retries × max_retry_delay
+    # soit 6 min 44 s mesurées si la connexion expire (S1b, connect_timeout
+    # 10 s), ≈ 6 min prévues si l'échec est immédiat (S1). ADR-018, ADR-020.
     "retries": 3,
     "retry_delay": timedelta(seconds=30),
     "retry_exponential_backoff": True,
-    "max_retry_delay": timedelta(minutes=10),
+    "max_retry_delay": timedelta(minutes=2),
     # Journal JSONL des incidents, voir docs/runbook.md. Via default_args,
     # s'applique aux douze tâches sans les toucher une à une.
     "on_retry_callback": sur_relance,
