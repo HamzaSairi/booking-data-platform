@@ -14,3 +14,4 @@ logs/
 airflow/logs/
 airflow/plugins/
 airflow/config/
+*:Zone.Identifier
