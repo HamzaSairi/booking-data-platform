@@ -678,7 +678,7 @@ tentative.
 
 **Un timeout que personne n'avait choisi.** 130 s, c'est
 `_DEFAULT_CONNECT_TIMEOUT` de psycopg 3.3.4, une constante privée.
-Détection en 14 min 43 s, contre ~6 min annoncées par l'ADR-018, qui
+Détection en 14 min 43 s, contre ~6 min annoncées par l'ADR-025, qui
 ignorait la durée des tentatives en échec. Formule vérifiée :
 `(retries + 1) × durée d'une tentative + retries × délai`.
 
@@ -688,7 +688,7 @@ un nom, pas une classe. Le test du jour 14 fabriquait une
 `OperationalError("timeout expired")` : l'exception qu'on imaginait, pas
 celle que psycopg lève.
 
-**Correction (ADR-020).** `connect_timeout=10` dans `extract.py`,
+**Correction (ADR-027).** `connect_timeout=10` dans `extract.py`,
 signature `S1b` dans `classer()`, test aligné sur l'exception réelle.
 Vérifié avant de mesurer : le conteneur exécute bien le code modifié
 (`/opt/airflow/project/ingestion`).
@@ -731,16 +731,106 @@ secondes : c'est du temps humain, un argument pour une vraie alerte
 - La commande `pytest` nue ne trouvait pas `simulator` (collecte
   interrompue) ; depuis quand, non établi. Racine ajoutée au `pythonpath`
   de `pyproject.toml`, `tests/conftest.py` supprimé.
-- `tests/test_idempotence.py` n'existe pas, alors qu'il était la preuve
-  du jour 9.
+- `tests/test_idempotence.py` existe, mais ne tourne pas par défaut : il
+  est marqué `bigquery` et `addopts` exclut ce marqueur, donc la collecte
+  ne l'affiche pas (conclusion hâtive « il n'existe pas », corrigée en
+  2/2). Il fait encore référence à `state/watermarks.json` et
+  `state/loaded_files.json`, supprimés au jour 13 : la preuve
+  d'idempotence du jour 9 ne teste plus le pipeline actuel.
 - venv de l'hôte en Python 3.12, conteneur en 3.13 : les tests ne
   tournent pas sur l'interpréteur de production (à régler en CI, jour 27).
-- `extract.py` lit les variables `POSTGRES_*` : la Connection Airflow
-  `postgres_source` n'est probablement lue par aucune tâche d'ingestion.
+- `extract.py` lit les variables `POSTGRES_*` ; la Connection
+  `postgres_source` est définie dans le compose
+  (`AIRFLOW_CONN_POSTGRES_SOURCE`) et survit à un `down -v`. Utilisée
+  par : `verif_source.py` seulement (DAG de vérification du jour 11),
+  aucune tâche d'ingestion.
 
 **Non fait.**
-- `execution_timeout` reporté (ADR-020) : un gel en pleine requête n'est
+- `execution_timeout` reporté (ADR-027) : un gel en pleine requête n'est
   pas couvert.
 - S1 (Postgres arrêté) pas re-mesuré avec le plafond de 2 min.
 - `tests/test_extract.py` (jour 7) : vérifier s'il teste encore le
   watermark supprimé au jour 13.
+
+## Jour 15 (2/2) — Lecture avant le test depuis zéro
+
+Le test depuis zéro passe au 3/3 : la lecture du code, prévue comme simple
+préparation, a trouvé des défauts que le test n'aurait fait que retrouver.
+
+**1. Les runs planifiés lisaient une journée à venir (ADR-028).** Avec
+`"@daily"`, Airflow 3 fixe `logical_date` à l'heure du déclenchement :
+`fenetre()` lisait la journée qui commence. Métadonnées : runs `scheduled`
+du 09/09 et du 10/09 terminés à 11:52 et 09:32 le jour même de leur
+fenêtre ; les 8 `backfill`, sur des journées closes, masquaient le défaut.
+Aucune perte : 0 ligne source ces deux jours. Preuve hors ligne, sans run :
+
+    CronTriggerTimetable       part le 2026-09-01 00:00  intervalle [09-01, 09-01)
+    CronDataIntervalTimetable  part le 2026-09-02 00:00  intervalle [09-01, 09-02)
+
+Correction : calendrier à intervalles et garde-fou dans `fenetre()`. DAG
+chargé sans erreur, fenêtre du 10/09 acceptée, fenêtre du 11/09 refusée.
+
+**2. Le plafond de 2 min n'avait jamais été commité.** Décidé au jour 14
+(ADR-025) et appliqué dans le dossier de travail que lit le conteneur :
+les mesures du 1/2 ont tourné sur du code non versionné. HEAD gardait
+10 min : un clone aurait détecté S1b en ≈ 30 min 41 s (calculé).
+
+**3. `raw_booking.hotels` n'existe pas, `v_hotels` est cassée.**
+Explication probable : les hôtels ne sont jamais modifiés, et le seed
+étale leur `updated_at` sur 730 jours, avant le `start_date`. L'extraction
+par fenêtre ne voit que ce qui change, jamais l'état initial. Décision à
+prendre avant dbt (ADR-029).
+
+**4. Expiration à 60 jours au niveau du dataset**
+(`defaultPartitionExpirationMs`, `defaultTableExpirationMs`) : une
+partition de plus de 60 jours est supprimée, retraiter 3 mois est
+impossible en l'état. `bookings` n'a pas d'expiration de table, raison non
+établie.
+
+**5. Un test vert sans assertion.** La copie de travail de
+`test_callbacks.py` avait perdu l'`assert` de `test_classement` et le cas
+`S1b` : 10 passed sur un test vide. Restauré depuis HEAD, 11 passed. À
+bloquer en CI (ruff `B018`, jour 27).
+
+**6. 17 fichiers stockés en CRLF** (Makefile, Dockerfile, SQL d'init,
+simulateur...) : `.gitattributes` ne convertit qu'à la réindexation.
+Normalisés ce jour ; c'est aussi pourquoi le commit du plafond réécrit tout
+le DAG.
+
+**7. Numérotation des ADR décalée de 7** depuis le jour 13. L'ADR du
+timeout n'avait jamais été ajoutée : son bloc « Vérifié » était collé sous
+l'ADR-026. Ajoutée comme ADR-027 ; renvois corrigés dans le runbook, le
+code du jour 15 et ce journal ; note de correspondance dans DECISIONS.md.
+
+**8. Écarts pour le test** : section « Lancer » du README restée au jour 5
+(ni GCP ni Airflow) ; `FERNET_KEY` exigée par le compose et absente de
+`.env.example` ; `container_name` fixes ; `./state` encore monté, vestige
+du watermark.
+
+**Prédictions pour le test depuis zéro (3/3)**, écrites le 11/09 après
+lecture, avant tout test :
+1. Phase A : `make check` échoue dès sa première commande, le compose
+   exigeant des variables absentes ou vides (`FERNET_KEY`, `GCP_PROJECT_ID`).
+2. `AIRFLOW_UID` absent : UID 50000 par défaut, fichiers d'Airflow sur
+   l'hôte appartenant à un autre utilisateur (probable).
+   `BQ_MAX_BYTES_BILLED` absent : défaut de 10 Gio, sans effet visible.
+3. Le clone ne démarre pas tant que les conteneurs d'origine existent
+   (`container_name`, ports 5432 et 8080).
+4. `data/` et `state/` créés en root par Docker : `PermissionError` au
+   premier `extract` (probable).
+5. DAG en pause à la création : aucun run sans activation.
+6. Rattrapage le 12/09 : 11 runs (fenêtres du 01/09 au 11/09), un par un,
+   aucun pour le 12/09 ; `fenetre_inachevee` et `intervalle_nul` à `f`
+   partout.
+7. Sans ADR-029 : seules les lignes dont le dernier `updated_at` est
+   postérieur au 01/09 arrivent ; `raw_booking.hotels` jamais créée.
+8. Fenêtres sans ligne : `load` en `skipped`, aucune partition créée.
+9. Temps du clone au dernier run vert : ____ min, build de l'image compris.
+
+**Non fait.**
+- Transition du calendrier sur la base de métadonnées actuelle : non
+  vérifiée.
+- Renvois d'ADR antérieurs au jour 15 dans le code et la documentation : à
+  relire (`git grep "ADR-0"`).
+- ADR-029 (chargement initial), test depuis zéro, démo, rétrospective.
+- `test_idempotence.py` obsolète ; `test_extract.py` à vérifier.

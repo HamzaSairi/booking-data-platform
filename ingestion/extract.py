@@ -36,7 +36,7 @@ def rel(chemin: Path) -> str:
 
 
 # ─── Connexion ───────────────────────────────────────────────────────
-# Timeout de connexion explicite (ADR-020). Sans lui, psycopg 3.3.4 attend
+# Timeout de connexion explicite (ADR-027). Sans lui, psycopg 3.3.4 attend
 # 130 s (constante privée _DEFAULT_CONNECT_TIMEOUT), mesuré au jour 15
 # sur un Postgres gelé. Une extraction complète dure moins d'1 s.
 CONNECT_TIMEOUT_S = 10

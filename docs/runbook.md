@@ -93,7 +93,7 @@ détection ≈ (retries + 1) × durée d'une tentative en échec + retries × d�
 
 **Statut** : testé le 10/09/2026 (expériences A et B du jour 14).
 **Mesuré** : détection 30 min 12 s (tâche déjà rejouée, plafond de relance
-à 10 min, avant l'ADR-018), résolution 4 min 25 s, partition intacte pendant
+à 10 min, avant l'ADR-025), résolution 4 min 25 s, partition intacte pendant
 la panne (632). **Non re-mesuré** avec le plafond de 2 min.
 
 ### Symptômes
@@ -166,17 +166,17 @@ période du `clear` pour les couvrir.
 
 ### Prévention en place
 
-- **Plafond de relance à 2 min** (ADR-018) : borne la détection à ≈ 6 min.
-- **`connect_timeout` = 10 s** (ADR-020) : sans effet ici, où l'échec est
+- **Plafond de relance à 2 min** (ADR-025) : borne la détection à ≈ 6 min.
+- **`connect_timeout` = 10 s** (ADR-027) : sans effet ici, où l'échec est
   immédiat ; il sert S1b.
-- **Pas d'`execution_timeout`** : reporté (ADR-020).
+- **Pas d'`execution_timeout`** : reporté (ADR-027).
 
 ---
 
 ## S1b — Postgres muet (gelé, machine saturée, réseau qui perd les paquets)
 
 **Statut** : testé le 10/09/2026 (expérience C du jour 15, deux fois :
-avant et après l'ADR-020, via `docker compose pause`).
+avant et après l'ADR-027, via `docker compose pause`).
 **Mesuré** : voir « Incidents mesurés », lignes C et C'.
 
 ### Différence avec S1
@@ -197,7 +197,7 @@ détection à 14 min 43 s.
 - Échec définitif ≈ 4 × 10 s + 3 × 2 min ≈ 6 min 44 s après le démarrage.
 - **Non couvert** : un gel survenant *après* la connexion, en pleine
   requête. La tâche resterait `running` sans limite, sans callback
-  (ADR-020).
+  (ADR-027).
 
 ### Impact
 
@@ -279,7 +279,7 @@ ORDER BY creation_time DESC LIMIT 20;
 
 Au rythme nominal (quatre chargements par jour), le projet est très loin des
 plafonds. Un quota atteint signifie donc presque toujours **une boucle** :
-backfill concurrent (ADR-016), tempête de relances, déclenchements répétés.
+backfill concurrent (ADR-023), tempête de relances, déclenchements répétés.
 Le diagnostic cherche la boucle, pas le quota.
 
 ### Résolution
@@ -329,8 +329,8 @@ journal reste vide.**
 Aucun côté Airflow. Découvert par réconciliation, par un test dbt (jour 20)
 ou par un analyste. Causes rencontrées au jour 13 :
 
-- fenêtre nulle, `data_interval_start == data_interval_end` (ADR-015) ;
-- amorçage concurrent détruisant des partitions (ADR-016) ;
+- fenêtre nulle, `data_interval_start == data_interval_end` (ADR-022) ;
+- amorçage concurrent détruisant des partitions (ADR-023) ;
 - run rejouant une version du DAG antérieure au correctif ;
 - fonction de chargement sans `return` : aucun job soumis, tâche verte.
 
@@ -374,7 +374,7 @@ af backfill create --dag-id ingestion_batch \
 ```
 
 `--max-active-runs 1` est **obligatoire** tant que la création des tables
-reste dans le pipeline (ADR-016).
+reste dans le pipeline (ADR-023).
 
 ### Vérification
 
@@ -398,7 +398,7 @@ tout backfill.
 - **Un blocage après la connexion ne produit rien.** Un blocage à la
   connexion devient un échec en 10 s (S1b), mais une requête gelée ou un
   chargement suspendu laisse la tâche `running` sans limite : pas
-  d'`execution_timeout` (ADR-020). Le zombie du jour 13 n'aurait déclenché
+  d'`execution_timeout` (ADR-027). Le zombie du jour 13 n'aurait déclenché
   aucun callback non plus. Les SLA d'Airflow 2 ont été retirées en 3.0 ;
   leur remplaçant, les Deadline Alerts, n'est pas mis en place ici.
 - **Les délais de relance dominent la détection** : 6 min sur 6 min 44 s

@@ -846,6 +846,11 @@ maximale d'environ 6 min.
 demande une reprise manuelle. Nouvelle valeur pas encore mesurée.
 **Date** : 2026-09-10
 
+**Révision (jour 15)** : le plafond ne fixe pas seul la latence. La
+formule oubliait la durée des tentatives en échec : juste pour un Postgres
+arrêté, fausse pour un Postgres muet (14 min 43 s mesurées au lieu de
+~6 min). Voir ADR-027.
+
 ## ADR-026 — Un run sans logical_date échoue immédiatement, sans repli
 
 **Contexte** : en Airflow 3, `dags trigger` sans `--logical-date` crée un
@@ -864,3 +869,96 @@ comme une erreur transitoire : 3 relances, ~5 min perdues.
   existant passe par `tasks clear` ou `backfill create`.
 **Coût** : tout déclenchement sans date échoue. C'est voulu.
 **Date** : 2026-09-10
+
+## ADR-027 — Timeout de connexion explicite à 10 s
+
+**Contexte** : expérience C du jour 15, Postgres gelé par `docker compose pause`.
+- Chaque tentative échoue après 130,3 s sur `ConnectionTimeout`. Cette
+  valeur n'est écrite nulle part dans le projet : c'est
+  `_DEFAULT_CONNECT_TIMEOUT` de psycopg 3.3.4, une constante privée.
+- Latence de détection mesurée : 14 min 43 s, contre ~6 min annoncées par
+  l'ADR-025. Formule vérifiée :
+  `(retries + 1) × durée d'une tentative + retries × délai`.
+- Incident classé `null` : `ConnectionTimeout` hérite d'`OperationalError`,
+  mais `classer()` compare un nom de classe, pas une classe.
+**Options** : (a) garder le défaut, (b) `connect_timeout` explicite dans
+`extract.py`, (c) `execution_timeout` sur les tâches, (d) (b) et (c).
+**Décision** : (b), 10 s, et signature `S1b` dans `classer()`. (c) reporté.
+**Raison** :
+- La cause mesurée est l'établissement de la connexion. (b) la traite là
+  où elle se produit et lève une vraie exception : relances, callback,
+  classement.
+- Une extraction complète dure moins d'1 s : 10 s laissent une marge
+  large à un Postgres lent sans masquer un Postgres muet.
+- Posé dans `make_conninfo`, car `extract.py` construit sa connexion
+  lui-même : dans la Connection Airflow, le paramètre serait ignoré.
+- Une valeur choisie et documentée plutôt qu'un défaut privé qui peut
+  changer à la prochaine mise à jour de psycopg.
+- (c) reporté : un gel en pleine requête n'est pas reproductible à ce
+  volume (extraction en 0,5 s), et la capacité d'Airflow 3 à interrompre
+  un appel bloqué n'est pas vérifiée. Une valeur non testée serait une
+  hypothèse déguisée en protection.
+**Coût** :
+- Un Postgres qui met plus de 10 s à accepter une connexion fait échouer
+  la tentative : relance, pas perte.
+- Un gel survenant après la connexion reste non borné. Limite connue.
+- Les délais de relance forment 90 % de la détection restante : le
+  prochain levier est `retries` ou le plafond, et non plus le timeout.
+**Vérifié** (même jour, même protocole) : tentatives en échec en 10,3 s,
+détection 6 min 44 s contre 14 min 43 s (prédit : 6 min 43 s), incident
+classé `S1b`. Latences calculées depuis `evenements.jsonl` seul. Mesures
+faites avec le plafond de 2 min de l'ADR-025, commité seulement le 11/09.
+**Date** : 2026-09-10
+
+## ADR-028 — Calendrier à intervalles de données (révise ADR-022)
+
+**Contexte** :
+- L'ADR-022 lit la fenêtre `[logical_date, logical_date + 1 j)`. Avec le
+  calendrier par défaut d'Airflow 3 pour une expression cron,
+  `logical_date` est l'heure du déclenchement : un run planifié lit la
+  journée qui commence.
+- Métadonnées (jour 15) : les 2 runs `scheduled` (09/09, 10/09) se sont
+  terminés à 11:52 et 09:32 le jour même de leur fenêtre ; les 8
+  `backfill` lisaient des journées closes, ce qui masquait le défaut.
+- Aucune perte mesurée : aucune ligne source n'a d'`updated_at` ces deux
+  jours. Défaut latent ; en production, chaque journée serait perdue,
+  avec des runs verts.
+**Options** : (a) `CronDataIntervalTimetable`, le run d'une journée part
+à sa fin ; (b) garder le déclencheur et lire `[logical_date − 1 j,
+logical_date)` ; (c) option globale `create_cron_data_intervals`.
+**Décision** : (a), plus un garde-fou dans `fenetre()` qui refuse une
+fenêtre non close.
+**Raison** :
+- (a) garde `logical_date` = début de la journée traitée, déclenchée
+  après sa fin : `fenetre()` et les clés de partition sont inchangées,
+  les backfills existants restent valides.
+- (b) décalerait d'un jour la date du run et la partition écrite : chaque
+  backfill et chaque lecture de l'UI deviendraient un piège.
+- (c) aurait le même effet, mais invisible dans le code du DAG.
+- `fenetre()` garde `logical_date` plutôt que `data_interval_*` : les
+  runs existants ont un intervalle nul enregistré à leur création, et un
+  clear les ferait retomber dans le défaut de l'ADR-022.
+- Le garde-fou transforme une régression silencieuse (S3) en échec franc,
+  sans relance. L'horloge sert à refuser, jamais à calculer la fenêtre :
+  le résultat d'un run reste une fonction de sa seule fenêtre.
+**Coût** :
+- Une journée arrive dans BigQuery au plus tôt à minuit passé.
+- Base de métadonnées existante : les runs à intervalle nul ne sont pas
+  réinterprétés ; prédit, non vérifié : les journées lues trop tôt ne se
+  relisent que par `tasks clear`. Environnement à reconstruire après le
+  test depuis zéro.
+**Vérifié** (11/09, sans lancer de run) : sur le `start_date` du DAG,
+`"@daily"` produit un premier run le 01/09 00:00 d'intervalle nul
+`[09-01, 09-01)` ; `CronDataIntervalTimetable` le fait partir le 02/09
+00:00 sur `[09-01, 09-02)`. DAG chargé sans erreur avec ce calendrier ;
+`fenetre()` accepte la journée du 10/09 et refuse celle du 11/09.
+**Date** : 2026-09-11
+
+## Note — renvois d'ADR dans l'historique Git
+
+Du jour 13 au jour 15, les ADR ont été rédigées avec une numérotation
+décalée de 7 par rapport à ce fichier (concordance des titres) : les
+messages de commit de cette période citent ADR-012 à ADR-020 pour les
+actuelles ADR-019 à ADR-027. Par exemple, « ADR-020 » dans f0e75b4 et
+a6ab15c désigne l'ADR-027. Renvois corrigés le 11/09 dans le runbook et
+dans le code modifié au jour 15.
