@@ -74,8 +74,6 @@ def chemin_partition(table: str, debut: datetime) -> Path:
 def extract_table(conn, table: str, debut: datetime, fin: datetime):
     """Retourne (lignes, colonnes) pour la fenêtre [debut, fin), ou None."""
     with conn.cursor() as cur:
-        print(f"  ? {table} host={os.environ.get('POSTGRES_HOST')} "
-              f"db={os.environ.get('POSTGRES_DB')} debut={debut!r} fin={fin!r}")
         # f-string acceptable : `table` vient d'une liste codée en dur,
         # jamais d'une entrée utilisateur.
         cur.execute(
