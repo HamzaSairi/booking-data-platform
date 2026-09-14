@@ -837,3 +837,85 @@ lecture, avant tout test :
 
 **Test depuis zéro (12/09)** — clone de origin/main, README suivi à la
 lettre, terminal neuf. Chronomètre au clone. Journal des écarts :
+
+## Rétrospective du sprint 3 (jours 11 à 15)
+
+**Objectif du sprint** : le pipeline s'exécute seul, se relance en cas
+d'échec et sait rattraper le passé. Atteint, mais deux défauts de fond ont
+été trouvés en fin de sprint, et ni l'un ni l'autre n'a été révélé par un
+test.
+
+### Ce qui a le mieux marché
+
+**Prédire avant de mesurer.** L'échec définitif de l'expérience C a été
+prédit à 2 s près (14:43:00 annoncé, 14:42:58 mesuré), et la détection
+après correction à une demi-seconde près (6 min 43 s contre 6 min 44 s).
+Une prédiction écrite avant transforme une observation en expérience : si
+elle tombe juste, le modèle est bon ; sinon, on a appris quelque chose. Les
+prédictions réfutées ont été les plus instructives — le blocage indéfini
+attendu de `pause` était en réalité un timeout de 130 s que personne
+n'avait choisi.
+
+**Les métadonnées comme source de preuve.** Le défaut du calendrier a été
+prouvé par une requête sur `dag_run` et par deux appels aux timetables,
+sans lancer un seul run. Mesurer sans exécuter évite de modifier ce qu'on
+observe.
+
+### Ce qui a coûté le plus cher
+
+**Supposer au lieu de vérifier.** Quatre fois le même schéma :
+- le plafond de relance de 2 min (ADR-025) appliqué dans le dossier de
+  travail mais jamais commité : toutes les mesures du jour 15 ont tourné
+  sur du code absent de HEAD ;
+- un commit annonçant « Voir ADR-029 » alors que l'ADR n'existait pas ;
+- le README déclaré corrigé alors qu'il était resté au jour 5 ;
+- `make check` lancé dans le dossier de développement au lieu du clone,
+  détruisant le volume Postgres.
+
+Chaque fois, dix secondes de vérification auraient suffi. Coût cumulé :
+environ une heure, plus une base à reconstruire.
+
+**Des tests qui survivent à la refonte qu'ils devaient valider.**
+`test_extract.py` était cassé depuis le jour 13 : il appelait `extract.py`
+sans les arguments devenus obligatoires et dépendait d'une fixture définie
+dans un autre fichier. Il n'a jamais été exécuté depuis, parce que
+personne ne lançait la suite complète. `test_idempotence.py`, marqué
+`bigquery`, est exclu par défaut et référence encore un watermark
+supprimé.
+
+### Trouvé par hasard, aurait dû l'être par un test
+
+**Les runs planifiés lisaient une journée à venir.** Airflow 3 fixe
+`logical_date` à l'heure du déclenchement : le run du 9 septembre s'est
+terminé à 11h52 après avoir lu la journée du 9, non close. Vert, et faux.
+Découvert en lisant le code pour préparer autre chose — ni un test ni une
+alerte ne l'a signalé. C'est le scénario S3 : aucune tâche n'échoue, aucun
+callback ne part, le journal reste vide.
+
+**80 % des faits n'arrivaient jamais en cible.** L'extraction par fenêtre
+ne voit que ce qui change. Invisible sur la base de développement par
+coïncidence de dates ; 1 596 réservations sur 2 000 manquantes sur une
+base neuve. Trouvé en réinstallant le projet depuis zéro, pas autrement.
+
+### Ce qu'on change pour le sprint 4
+
+1. **Vérifier avant d'affirmer.** Un commit qui cite une ADR suppose
+   qu'elle existe ; une correction annoncée suppose qu'elle est écrite.
+   `grep` et `git diff` coûtent dix secondes.
+2. **`pwd &&` devant toute commande destructrice** tant que deux
+   environnements coexistent. `make check` détruit sans confirmer.
+3. **Des tests qui cassent quand la donnée est fausse**, pas seulement
+   quand le code plante. C'est exactement l'objet des tests dbt du jour 20,
+   et la seule vraie réponse au scénario S3.
+4. **Lancer la suite complète, pas un fichier.** Trois tests cassés
+   depuis le jour 13 sont passés inaperçus faute de `pytest tests/`.
+
+### Chiffres du sprint
+
+| | |
+|---|---|
+| Incidents mesurés | 4 (S1 ×2, S1b ×2), latence de 6 min 44 s à 30 min 12 s |
+| Détection S1b après correction | 6 min 44 s contre 14 min 43 s, soit ÷ 2,2 |
+| Tests depuis zéro | 2 — 11 écarts au premier, 0 casse au second |
+| Réconciliation finale | 2 000 = 1 970 en cible + 30 en fenêtre non close |
+| ADR écrites | 025 à 029 |
