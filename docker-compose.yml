@@ -28,7 +28,6 @@ x-airflow-common: &airflow-common
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
     - ./ingestion:/opt/airflow/project/ingestion:ro
-    - ./state:/opt/airflow/project/state
     - ./data:/opt/airflow/project/data
     - ${GOOGLE_APPLICATION_CREDENTIALS:?chemin hôte de la clé GCP manquant}:/opt/airflow/gcp/sa.json:ro
   user: "${AIRFLOW_UID:-50000}:0"

@@ -1,5 +1,25 @@
-.PHONY: up down reset seed simulate age start test lint check
+.PHONY: up down reset seed simulate age start test lint check install airflow airflow-down snapshot
 #                                    ^^^^^^^^^  ← ajoute ces deux noms
+
+install:
+	python -m venv .venv
+	.venv/bin/pip install -q -r simulator/requirements.txt \
+	  -r ingestion/requirements.txt -r requirements-dev.txt
+	@echo "Fait. Active l'environnement : source .venv/bin/activate"
+
+# Airflow est derriere un profil Compose : il ne demarre qu'ici.
+airflow:
+	docker compose --profile airflow up -d
+	@echo "UI : http://localhost:8080 — activer le DAG : make dag-on"
+
+airflow-down:
+	docker compose --profile airflow down
+
+dag-on:
+	docker compose exec airflow-scheduler airflow dags unpause ingestion_batch
+
+snapshot:
+	python -m ingestion.snapshot
 
 up:
 	docker compose up -d
@@ -13,7 +33,7 @@ down:
 
 reset:
 	docker compose down -v
-	rm -rf state/ data/
+	rm -rf data/
 	$(MAKE) up
 	$(MAKE) seed
 
