@@ -1,13 +1,5 @@
 """Verifie que le seed produit une base coherente, pas seulement peuplee."""
-import pytest
 
-from simulator.generate import connect
-
-
-@pytest.fixture(scope="module")
-def cur():
-    with connect() as conn, conn.cursor() as c:
-        yield c
 
 
 def test_tables_peuplees(cur):
