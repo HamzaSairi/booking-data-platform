@@ -834,3 +834,6 @@ lecture, avant tout test :
   relire (`git grep "ADR-0"`).
 - ADR-029 (chargement initial), test depuis zéro, démo, rétrospective.
 - `test_idempotence.py` obsolète ; `test_extract.py` à vérifier.
+
+**Test depuis zéro (12/09)** — clone de origin/main, README suivi à la
+lettre, terminal neuf. Chronomètre au clone. Journal des écarts :
