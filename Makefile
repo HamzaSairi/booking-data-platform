@@ -2,7 +2,7 @@
 #                                    ^^^^^^^^^  ← ajoute ces deux noms
 
 install:
-	python -m venv .venv
+	python3 -m venv .venv
 	.venv/bin/pip install -q -r simulator/requirements.txt \
 	  -r ingestion/requirements.txt -r requirements-dev.txt
 	@echo "Fait. Active l'environnement : source .venv/bin/activate"
