@@ -1,7 +1,7 @@
 """Extraction Postgres -> Parquet, bornée par une fenêtre temporelle.
 
 Fonction pure du couple (source, fenêtre) : aucun état lu ni écrit. Le
-registre des intervalles traités appartient à l'ordonnanceur (ADR-012).
+registre des intervalles traités appartient à l'ordonnanceur (ADR-019).
 Rejouer une fenêtre réécrit le même fichier au même chemin, reflétant
 l'état actuel de la source — y compris les lignes arrivées en retard.
 
