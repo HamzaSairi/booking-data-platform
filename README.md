@@ -81,19 +81,50 @@ Aucune alerte ne se déclenche, aucun pipeline n'échoue. Le chiffre est simplem
 
 ## Lancer le projet
 
-Prérequis : Docker, Python 3.11+, `make`.
+Prérequis : Docker, Python 3.11+, `make`, et un projet GCP avec un compte
+de service ayant accès à BigQuery.
+
+### 1. Configuration
 
 ```bash
-cp .env.example .env    # renseigner POSTGRES_PASSWORD
-make check              # démarre, peuple, teste
-make simulate           # fait vivre la base
+cp .env.example .env
 ```
 
-### Amorçage : chargement initial
+Cinq valeurs à renseigner dans `.env` :
+
+| Variable | Valeur |
+|---|---|
+| `POSTGRES_PASSWORD` | au choix |
+| `GCP_PROJECT_ID` | l'identifiant de ton projet GCP |
+| `GOOGLE_APPLICATION_CREDENTIALS` | chemin **absolu** de la clé du compte de service, hors du dépôt |
+| `AIRFLOW_UID` | ton UID : `id -u` |
+| `FERNET_KEY` | à générer (ci-dessous) |
+
+```bash
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+`FERNET_KEY` chiffre les connexions qu'Airflow stocke en base. Elle est
+propre à chaque installation : ne jamais la partager ni la commiter.
+
+`AIRFLOW_UID` doit valoir ton UID. Sinon les fichiers écrits dans `data/`
+depuis l'hôte sont inaccessibles aux conteneurs, et inversement.
+
+### 2. Base source et données
+
+```bash
+make install            # venv + dépendances
+source .venv/bin/activate
+make check              # démarre Postgres, peuple, teste
+```
+
+### 3. Amorçage BigQuery
 
 À lancer **une seule fois**, avant le premier run du DAG :
 
-    python -m ingestion.snapshot
+```bash
+make snapshot
+```
 
 Le pipeline n'extrait que ce qui change dans une fenêtre. Les lignes
 antérieures au `start_date` et jamais modifiées depuis n'arriveraient
@@ -101,8 +132,27 @@ jamais en cible : ce chargement les écrit dans une partition dédiée (la
 veille du `start_date`), qu'aucune fenêtre régulière ne peut écraser.
 Voir ADR-029.
 
-Sans cette étape, `raw_booking.hotels` n'existe pas et les dimensions
-sont incomplètes.
+Sur une base fraîchement peuplée, cela représente environ 80 % des
+réservations. Sans cette étape, `raw_booking.hotels` n'existe pas et les
+dimensions sont incomplètes.
+
+### 4. Orchestration
+
+Airflow est derrière un profil Compose : il ne démarre pas avec `make up`.
+
+```bash
+make airflow            # démarre les 4 services (~1 min)
+make dag-on             # active ingestion_batch, le rattrapage part seul
+```
+
+L'interface est sur http://localhost:8080. Le rattrapage crée un run par
+journée écoulée depuis le `start_date` (01/09/2026), exécutés un par un.
+La journée en cours n'est jamais traitée : son run part à minuit, une fois
+la fenêtre close (ADR-028).
+
+```bash
+make airflow-down       # libère la mémoire quand Airflow n'est pas utile
+```
 
 ## Décisions d'architecture
 
