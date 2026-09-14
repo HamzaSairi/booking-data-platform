@@ -89,6 +89,21 @@ make check              # démarre, peuple, teste
 make simulate           # fait vivre la base
 ```
 
+### Amorçage : chargement initial
+
+À lancer **une seule fois**, avant le premier run du DAG :
+
+    python -m ingestion.snapshot
+
+Le pipeline n'extrait que ce qui change dans une fenêtre. Les lignes
+antérieures au `start_date` et jamais modifiées depuis n'arriveraient
+jamais en cible : ce chargement les écrit dans une partition dédiée (la
+veille du `start_date`), qu'aucune fenêtre régulière ne peut écraser.
+Voir ADR-029.
+
+Sans cette étape, `raw_booking.hotels` n'existe pas et les dimensions
+sont incomplètes.
+
 ## Décisions d'architecture
 
 Voir [DECISIONS.md](./DECISIONS.md).

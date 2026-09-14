@@ -954,6 +954,65 @@ fenêtre non close.
 `fenetre()` accepte la journée du 10/09 et refuse celle du 11/09.
 **Date** : 2026-09-11
 
+## ADR-029 — Chargement initial (snapshot) avant le pipeline incrémental
+
+**Contexte** : l'extraction par fenêtre (ADR-019, ADR-022) ne voit que ce
+qui change pendant la fenêtre. Une ligne créée avant le `start_date` et
+jamais modifiée depuis n'arrive jamais en cible. Mesuré le 12/09 :
+
+| Table | Total | Depuis le 01/09 | Manquant |
+|---|---|---|---|
+| `hotels` | 50 | 0 | 50 (100 %) |
+| `customers` | 511 | 330 | 181 (35 %) |
+| `bookings` | 2 762 | 2 762 | 0 |
+| `payments` | 2 339 | 2 339 | 0 |
+
+`raw_booking.hotels` n'existait pas et la vue `v_hotels` était cassée. Les
+181 clients manquants sont des dimensions absentes pour des faits
+présents : `dim_customers` aurait été incomplète au jour 16.
+**Options** : (a) tâche de snapshot lancée une fois par table ;
+(b) reculer `start_date` jusqu'à l'horizon du seed (730 j) ;
+(c) écrasement complet des dimensions à chaque run.
+**Décision** : (a), sur les 4 tables, bornes `[epoch, start_date)`,
+partition dédiée datée de la veille du `start_date`, en écrasement.
+**Raison** :
+- C'est le mécanisme du snapshot initial de Debezium (`op = r`) : le
+  sprint 5 reprendra le même raisonnement sur le CDC.
+- Bornes `[epoch, start_date)` plutôt qu'un `SELECT *` : c'est exactement
+  le complément des fenêtres du DAG, donc aucun recouvrement et aucun
+  doublon à arbitrer. Vérifié : 330 + 181 = 511 clients en cible.
+- Les 4 tables, même si `bookings` et `payments` n'y gagnent rien
+  aujourd'hui : leur complétude ne tient qu'à l'écart entre l'horizon du
+  seed (90 j) et le `start_date` (11 j). Une règle uniforme se teste ; une
+  exception par table devient un piège.
+- (b) : 730 runs, et l'expiration de partition à 60 jours (dataset)
+  effacerait les plus anciennes au fur et à mesure.
+- (c) : perte de l'historique des modifications et relecture complète
+  quotidienne. Tenable pour 50 hôtels, indéfendable à l'échelle.
+- Partition datée de la veille du `start_date` (31/08) et non du
+  `start_date` lui-même : la partition du 01/09 est celle d'une fenêtre
+  régulière, qu'un `tasks clear` écraserait, détruisant le snapshot sans
+  la moindre erreur (S3). Aucune fenêtre ne vise le 31/08, et les vues de
+  déduplication ne filtrent pas sur la partition.
+- Garde-fou contre un second lancement : `get_table` accepte n'importe
+  quel décorateur de partition, même inexistante (vérifié le 12/09), donc
+  c'est `num_rows > 0` qui distingue une partition écrite d'une partition
+  vide.
+**Coût** :
+- Une étape manuelle avant le premier run, documentée dans le README :
+  une procédure de démarrage non écrite est une procédure perdue.
+- Un snapshot rejoué après coup mélange deux instants dans la même
+  table : à ne lancer qu'à l'amorçage, d'où le garde-fou et `--force`.
+- Pas de colonne `_snapshot` : `annoter()` fixe le schéma, et l'ajouter
+  imposerait une migration des trois tables déjà chargées. L'origine se
+  dérive à la lecture (`_interval_start = '2026-08-31'`). Limite assumée.
+- Ne traite pas les suppressions survenues avant le snapshot. Levée au
+  sprint 5.
+**Vérifié** (12/09) : 231 lignes écrites (50 + 181), `v_hotels` renvoie 50
+après avoir été cassée depuis le jour 13, total `customers` = 511 sans
+doublon.
+**Date** : 2026-09-12
+
 ## Note — renvois d'ADR dans l'historique Git
 
 Du jour 13 au jour 15, les ADR ont été rédigées avec une numérotation
