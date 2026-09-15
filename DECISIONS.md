@@ -213,6 +213,7 @@ plus fort des deux.
 **Date** : 2026-09-01
 
 ## ADR-009 — Extraction incrémentale : `>` avec marge de sécurité
+**Statut** : remplacée par ADR-019. Le watermark est supprimé ; la marge de sécurité n'a plus d'équivalent (résidu reporté au CDC).
 **Contexte** : l'extraction doit ne lire que les lignes modifiées depuis le
 dernier passage, via `WHERE updated_at > watermark`.
 
@@ -244,6 +245,7 @@ Zéro perte.
 **Date** : 2026-09-01
 
 ## ADR-010 — Ordre écrire-puis-avancer, et écriture atomique de l'état
+**Statut** : partiellement caduque depuis ADR-019 (plus de watermark). Le principe « écrire, puis confirmer » reste celui du jour 24.
 **Contexte** : l'extraction produit un fichier Parquet et met à jour un
 watermark persisté dans `state/watermarks.json`.
 **Options** : (a) avancer le watermark puis écrire, (b) écrire puis avancer,
@@ -262,6 +264,7 @@ illisible au tour suivant.
 **Date** : 2026-09-01
 
 ## ADR-011 — Garde d'identité de base dans le fichier d'état
+**Statut** : remplacée par ADR-019 (`db_identity()` supprimé).
 **Contexte** : `state/watermarks.json` vit sur le disque hôte et survit à un
 `docker compose down -v`, qui détruit pourtant le volume Postgres.
 **Décision** : stocker `pg_control_system().system_identifier` à côté des
@@ -274,6 +277,7 @@ Le problème avait déjà été rencontré au Jour 5 avec `simulation_log.jsonl`
 **Date** : 2026-09-01
 
 ## ADR-012 — Partitionner la couche raw sur `_ingested_at`
+**Statut** : remplacée par ADR-020 (partitionnement sur `_interval_start`).
 
 **Contexte** : les tables `raw_booking.*` reçoivent des chargements
 quotidiens en WRITE_APPEND et doivent être partitionnées.
@@ -301,6 +305,7 @@ quotidiennement. Serait obligatoire sur une table de production.
 **Date** : 2026-09-02
 
 ## ADR-013 — Déduplication à la lecture plutôt qu'à l'écriture
+**Statut** : complétée par ADR-020. L'écriture se fait par écrasement de partition ; la déduplication à la lecture reste nécessaire.
 
 **Date** : 2026-09-03
 
@@ -329,7 +334,7 @@ qui est arrivé mardi », plus d'annulation d'un lot par `DELETE WHERE
 _ingested_at = '...'`. Le DML est facturé au scan alors que les load jobs sont
 gratuits — on paierait pour perdre de l'information.
 
-(b) **Écrasement de partition.** Écarté par conséquence directe de l'ADR-005 :
+(b) **Écrasement de partition.** Écarté par conséquence directe de l'ADR-012 :
 les partitions sont sur `_ingested_at`, pas sur une date métier. Une ligne
 modifiée aujourd'hui atterrit dans la partition d'aujourd'hui quelle que soit sa
 date de réservation ; il n'existe donc aucune partition contenant « toutes les
@@ -351,7 +356,7 @@ immuable ; la déduplication devient une opération de lecture, par
 **Détails d'implémentation qui comptent**
 - Le second critère de tri (`_ingested_at DESC`) n'est pas cosmétique : il ferme
   le départage des lignes de même `updated_at`, cas produit par le choix de `>`
-  plutôt que `>=` sur le watermark (ADR du jour 7). Sans lui, le gagnant serait
+  plutôt que `>=` sur le watermark (ADR-009). Sans lui, le gagnant serait
   choisi arbitrairement et la sortie ne serait pas reproductible.
 - Les colonnes techniques (`_ingested_at`, `_source_file`) sont exclues de la
   vue. Elles diffèrent entre deux copies d'une même ligne ; les conserver
@@ -384,7 +389,7 @@ passerait sans avoir rien rejoué.
 **Date** : 2026-09-03
 
 **Contexte**
-Le pipeline batch est fonctionnel, idempotent et testé (ADR-006,
+Le pipeline batch est fonctionnel, idempotent et testé (ADR-013,
 `test_idempotence.py`). La question n'est pas de le réparer : il est correct au
 regard de ce qu'il observe. La question est de savoir ce qu'il n'observe pas.
 
@@ -456,7 +461,7 @@ changements — alors que Postgres en tient un depuis toujours.
   ne consomme les données empêche Postgres de purger son WAL, jusqu'à saturation
   du disque. Incident de production classique, à surveiller dès le jour 22.
 - Garantie at-least-once côté consommateur → déduplication en aval obligatoire.
-  Cohérent avec l'ADR-006, qui a déjà fait ce choix pour le batch.
+  Cohérent avec l'ADR-013, qui a déjà fait ce choix pour le batch.
 - Le batch n'est pas supprimé : il reste pertinent pour les tables statiques
   (`hotels`) et sert de filet de réconciliation (jour 25).
 
@@ -593,6 +598,7 @@ l'ingestion à une Connection Airflow annulerait le bénéfice.
 ---
 
 ## ADR-017 — Un fichier d'état par table plutôt qu'un fichier unique
+**Statut** : remplacée par ADR-019 et ADR-020 (`state/` supprimé).
 
 **Contexte** : le DAG lance les quatre extractions en parallèle, une par
 TaskGroup. Les quatre processus appelaient `sauver_etat()` sur le même
@@ -630,6 +636,7 @@ fichier local. Reporté dans docs/limites.md.
 ---
 
 ## ADR-018 — Relances sur l'I/O, échec immédiat sur la qualité
+**Statut** : modifiée par ADR-025 (plafond de relance ramené à 2 min).
 
 **Contexte** : le plan demande `retries=3` avec délai exponentiel. Appliqué
 uniformément, ce réglage relance aussi les échecs de validation de données.
@@ -652,11 +659,6 @@ manifeste. Aucune reprise automatique ne le rattrapera, puisque `load` ne
 reçoit que ce que `validate` du même run a laissé passer. C'est délibéré :
 une donnée jugée invalide ne doit pas entrer par la porte de derrière.
 La procédure de reprise est une décision humaine — runbook du jour 14.
-
-hotels,393,150
-customers,4553,1975
-bookings,16876,7070
-payments,14410,5805
 
 **Date** : 2026-09-07
 
@@ -707,7 +709,7 @@ clause WHERE, pas une donnée sale.
 **Contexte** : le chargement du jour 8 tenait un manifeste
 `state/loaded/{table}.json` des fichiers déjà envoyés, et écrivait en
 `WRITE_APPEND` dans des tables partitionnées sur `_ingested_at`. Ferme
-l'ADR-005 du jour 9, laissé ouvert entre MERGE et écrasement.
+l'ADR-013 du jour 9, laissé ouvert entre MERGE et écrasement.
 
 **Options** : (a) MERGE sur clé primaire, (b) manifeste conservé,
 (c) écrasement de partition sur la date logique.
@@ -762,7 +764,7 @@ levé.
 seul fichier, tandis que le même appel réussissait à la main dans le même
 conteneur. Cause : un run manuel créé à 15:40, avant le refactor
 d'`extract.py`, relancé automatiquement jusqu'à `try_number=8` par la
-politique de retry de l'ADR-010, et rejouant la version du DAG épinglée à
+politique de retry de l'ADR-018, et rejouant la version du DAG épinglée à
 sa création (`dag_version_id`). Avec `max_active_runs=1`, ce run occupait
 l'unique créneau et bloquait tous les runs de backfill.
 
@@ -775,7 +777,7 @@ un backfill.
 Les partitions étant désormais indépendantes, la correction n'exige plus
 la sérialisation ; mais un backfill de sept jours lancerait sinon vingt-
 huit extractions Postgres et autant de load jobs en parallèle. C'est une
-limite de débit délibérée, plus une limite de correction — et l'ADR-010
+limite de débit délibérée, plus une limite de correction — et l'ADR-018
 en devient le corollaire dangereux : une tâche en échec permanent
 transforme cette limite en blocage global.
 
@@ -787,6 +789,7 @@ ne démarre » → vérifier les runs en cours avant toute autre hypothèse.
 **Date** : 2026-09-08
 
 ## ADR-022 — La fenêtre est dérivée du schedule, non de data_interval.
+**Statut** : révisée par ADR-028.
 Airflow 3.3 renseigne data_interval_start == data_interval_end sur un DAG à schedule cron. Une extraction bornée par ces deux valeurs ne rend jamais rien, sans erreur : huit runs verts, zéro octet. Fenêtre calculée comme [logical_date, logical_date + FENETRE) par une fonction unique partagée par les trois tâches — un calcul divergent entre extract et validate ferait rejeter des données correctes. Coût : FENETRE doit rester cohérente avec schedule à la main.
 
 ## ADR-023 — L'amorçage d'une table n'est pas idempotent sous concurrence. 
@@ -812,7 +815,7 @@ JSON par événement dans un fichier partagé, doublée dans le log de tâche.
 - Les relances sont journalisées aussi : dans l'expérience A, un run est
   resté vert malgré une panne, et elles en sont la seule trace.
 - Chaque ligne porte un `scenario_runbook` ; `null` signale un incident
-  non couvert, et c'est ce qui a révélé le bug de l'ADR-019.
+  non couvert, et c'est ce qui a révélé le bug de l'ADR-026.
 **Coût** : personne n'est prévenu, il faut aller lire le journal, ce qui
 serait inacceptable en production. Les callbacks ne voient ni un run
 bloqué, ni un run vert dont la cible est fausse (S3).
