@@ -919,3 +919,53 @@ base neuve. Trouvé en réinstallant le projet depuis zéro, pas autrement.
 | Tests depuis zéro | 2 — 11 écarts au premier, 0 casse au second |
 | Réconciliation finale | 2 000 = 1 970 en cible + 30 en fenêtre non close |
 | ADR écrites | 025 à 029 |
+
+## Jour 16 — dbt : mise en place (sprint 4)
+
+**Fait** : projet `dbt/booking_analytics` initialisé sans assistant
+(`--skip-profile-setup`), profil en variables d'environnement, macro de
+schéma, modèle jetable construit puis supprimé. ADR-030. Relecture de
+DECISIONS.md : renvois cassés corrigés, statuts de remplacement ajoutés.
+
+**Contrôle préalable raw vs source** (4 tables) :
+| Table | Source | Raw (lignes) | Raw (clés) | Écart |
+|---|---|---|---|---|
+| customers | 500 | 498 | 498 | 2 |
+| hotels | 50 | 50 | 50 | 0 |
+| bookings | 2 000 | 1 970 | 1 970 | 30 |
+| payments | 1 720 | 1 675 | 1 675 | 45 |
+
+Écart entièrement expliqué : exactement 2 / 0 / 30 / 45 lignes source ont un
+`updated_at` postérieur à la fin de la dernière fenêtre chargée (2026-09-14).
+Fenêtre non close, pas une perte.
+Aucun doublon (lignes = clés) : environnement reconstruit au jour 15, chaque
+ligne n'a changé que dans une fenêtre. La déduplication des `stg_*` (jour 17)
+sera donc invisible sur ces données — il faudra modifier une ligne sur deux
+journées pour la tester réellement.
+
+**Preuve** :
+- `dbt debug` : All checks passed
+- manifest : `smoke_test` → dataset `staging_booking`, vue (confirmé,
+  aucun `staging_booking_staging_booking`)
+- `smoke_test` : `count(*)` sur `raw_booking.bookings`, soit 1 970 lignes
+  (valeur remesurée après suppression du modèle, aucun chargement entre-temps)
+
+**Incidents** :
+- DECISIONS.md, JOURNAL.md et README.md retrouvés modifiés sans commit,
+  dans une version antérieure au jour 15 (ni ADR-027 à 029, ni
+  rétrospective). Probable onglet d'éditeur resté ouvert puis sauvegardé.
+  Détecté parce que le script de l'ADR-030 exigeait l'ADR-029. Copies
+  gardées dans ~/sauvegarde-j16, fichiers restaurés depuis Git.
+  Cause exacte : inconnue. Hypothèse non vérifiée : onglet d'éditeur
+  ouvert avant le jour 15, puis sauvegardé.
+- `cd dbt && dbt init` lancé depuis `dbt/` : chaîne arrêtée par `&&`, mais
+  `mkdir` lancé séparément au mauvais endroit. `pwd &&` n'est plus une option.
+- `python` absent sur Ubuntu (`python3`) : venv non créé, `pip install`
+  refusé par le Python système (PEP 668), `pip freeze` système écrit dans
+  `requirements.txt`. Corrigé en vérifiant le `dbt` actif avant d'écrire.
+- `.user.yml` commité (identifiant anonyme de dbt) : retiré avant push.
+
+**Pour le jour 17** : les vues `v_*` de `staging_booking` sont celles de
+l'ADR-013, qui prévoyait leur remplacement par dbt. Avant de les supprimer,
+chercher ce qui les lit encore (`git grep -n "v_bookings\|v_hotels"`),
+notamment `tests/test_idempotence.py`.

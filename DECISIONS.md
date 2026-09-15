@@ -1016,6 +1016,48 @@ après avoir été cassée depuis le jour 13, total `customers` = 511 sans
 doublon.
 **Date** : 2026-09-12
 
+## ADR-030 — dbt : environnement dédié, profil par variables, datasets fixes
+
+**Contexte** : mise en place de dbt (jour 16). Trois choix avant le premier
+modèle : où installer dbt, comment l'authentifier sans secret versionné,
+dans quels datasets il écrit.
+
+**Décision 1 — Venv dédié `.venv-dbt`**, séparé de `.venv` (simulateur,
+ingestion). Dépendances figées dans `dbt/requirements.txt`
+(dbt-core 1.12.4, dbt-bigquery 1.12.0).
+*Raison* : dbt-bigquery impose ses versions de `google-cloud-bigquery` et
+`protobuf`, qui peuvent entrer en conflit avec celles de l'ingestion.
+Risque **anticipé, non mesuré** — vérifiable par
+`.venv/bin/pip install --dry-run dbt-bigquery`.
+*Conséquence* : quand Airflow lancera dbt, il faudra un environnement dbt
+distinct dans le conteneur, comme ADR-016 a gardé l'ingestion indépendante
+d'Airflow.
+
+**Décision 2 — `profiles.yml` versionné, uniquement en `env_var()`**,
+relu depuis `.env`.
+*Raison* : `.env` reste la source unique partagée avec l'ingestion — même
+clé de service account (ADR-007), même région EU (ADR-006), même plafond
+`BQ_MAX_BYTES_BILLED` que `ingestion/bq.py` (ADR-008). Une variable absente
+fait échouer dbt immédiatement au lieu de construire au mauvais endroit.
+*Coût* : `set -a && source ../../.env && set +a` avant chaque session ; la
+CI du jour 27 devra fournir les mêmes variables.
+
+**Décision 3 — Surcharge de `generate_schema_name`.**
+*Options* : (a) comportement par défaut, qui écrit dans
+`<dataset cible>_<schema>` (ex. `staging_booking_staging_booking`) ;
+(b) `generate_schema_name_for_env`, natif : isolé en dev, nommé en prod ;
+(c) macro qui écrit dans le dataset nommé tel quel.
+*Décision* : (c).
+*Raison* : les trois datasets existent depuis le jour 6 et seront gérés par
+Terraform (jour 26) ; dbt ne doit pas en créer d'autres.
+*Contrepartie* : aucune isolation par développeur — un `dbt run` écrit
+directement là où lira le dashboard. Acceptable seul, pas en équipe
+→ `docs/limites.md`.
+*Vérification* : `dbt compile` et lecture de `target/manifest.json` avant
+tout `dbt run`, puis modèle jetable construit et supprimé.
+
+**Date** : 2026-09-15
+
 ## Note — renvois d'ADR dans l'historique Git
 
 Du jour 13 au jour 15, les ADR ont été rédigées avec une numérotation
