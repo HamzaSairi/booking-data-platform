@@ -1,0 +1,16 @@
+# Aucun secret ici : toutes les valeurs viennent de .env (voir .env.example).
+booking_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: "{{ env_var('BQ_DATASET_STAGING') }}"
+      location: "{{ env_var('BQ_LOCATION') }}"
+      threads: 4
+      priority: interactive
+      job_retries: 1
+      job_execution_timeout_seconds: 300
+      maximum_bytes_billed: "{{ env_var('BQ_MAX_BYTES_BILLED') | as_number }}"

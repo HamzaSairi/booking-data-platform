@@ -15,3 +15,9 @@ airflow/logs/
 airflow/plugins/
 airflow/config/
 *:Zone.Identifier
+
+.venv-dbt/
+# dbt
+.venv-dbt/
+dbt/booking_analytics/target/
+dbt/booking_analytics/dbt_packages/
