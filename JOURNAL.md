@@ -1029,3 +1029,30 @@ mis à zéro rend « surencaissés » tous les paiements de la réservation).
 minuit, par le DAG et non à la main (ADR-027). Puis, dans `stg_*` : devises
 toutes `EUR` alors que la raw en contient 4 autres ; exactement 1
 `is_duplicate_submission` ; 1 réservation supprimée restée fantôme.
+
+## Jour 17 (suite) — Chargement des journées manquées
+
+**Prédiction** — calculée par l'assistant, pas par moi, avant le démarrage
+d'Airflow (horodatée par le commit qui la contient). Méthode : lignes source
+dont `updated_at` tombe dans chaque fenêtre UTC, c'est-à-dire exactement ce
+que l'extraction doit lire.
+
+- Dernière journée chargée : 2026-09-17 ; aujourd'hui (UTC) : 2026-09-22
+- Runs de rattrapage : 4, du 2026-09-18 au 2026-09-21
+  (réserve : Airflow compte ses runs dans sa base de métadonnées ; une
+  journée déjà traitée à vide n'a laissé aucune partition, ADR-020)
+
+| Journée | customers | hotels | bookings | payments | Attendu |
+|---|---|---|---|---|---|
+| 2026-09-18 | 0 | 0 | 0 | 0 | vide : `load` `skipped` partout |
+| 2026-09-19 | 0 | 0 | 0 | 0 | vide : `load` `skipped` partout |
+| 2026-09-20 | 0 | 0 | 0 | 0 | vide : `load` `skipped` partout |
+| 2026-09-21 | 0 | 0 | 0 | 0 | vide : `load` `skipped` partout |
+
+- Chaque partition chargée doit contenir exactement ces chiffres. Un écart
+  est un défaut du pipeline, pas de la source.
+- Une ligne modifiée plusieurs fois ne compte qu'une fois (état final).
+  La suppression de la simulation reste invisible (limite du jour 10).
+- Fraîcheur après chargement : **error**, âge 106 h — dernière
+  journée active 2026-09-17, donc `loaded_at` = 2026-09-18 00:00 UTC.
+  Une source calme ressemble à un pipeline arrêté (ADR-031, décision 4).
