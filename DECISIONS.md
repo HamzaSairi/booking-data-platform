@@ -1166,6 +1166,51 @@ du jour 20. Contrôle permanent : `sql/checks/reconciliation_raw.py`.
 
 **Date** : 2026-09-22
 
+## ADR-033 — `fct_bookings` clusterisée, non partitionnée, en bac à sable
+
+**Contexte** : le plan demande un partitionnement sur `booking_date` et un
+clustering sur `hotel_id`. En bac à sable (ADR-008), chaque partition expire
+60 jours après **sa date** : une partition plus ancienne expire dès sa création.
+
+**Mesure** (22/09, prédite avant construction par une requête sur staging) :
+757 réservations sur 2 114 absentes du fait (36 %), première date présente
+= 2026-07-24, exactement la limite. Soit 912403 € réservés et
+819623.65 € encaissés disparus du reporting. `CREATE TABLE` a réussi,
+le run était vert ; seuls les deux tests singuliers ont échoué (réconciliation
+par identifiant : 757 écarts ; conservation des montants).
+
+**Options** :
+(a) partitionner quand même — exclu, perte croissante chaque jour ;
+(b) surcharger `partition_expiration_days` (3 650) — essayé : dbt signale
+l'erreur « Partition expiration time must be less than 60 days while in
+sandbox mode », mais la table contenait ensuite 2 114 lignes et une
+expiration de 3 650 jours. État incohérent. Jobs BigQuery de l'essai :
+  (historique indisponible : 403 Access Denied: Table booking-data-platform-b7768d:region-eu.INFORMATION_SCHEMA.JOBS_BY_USER: Use)
+Quelle qu'en soit la cause, un modèle en échec à chaque run est inutilisable ;
+(c) pas de partitionnement, clustering sur `(booking_date, hotel_id)` ;
+(d) quitter le bac à sable (recours de l'ADR-008).
+
+**Décision** : (c).
+
+**Raison** :
+- À quelques Mo, le partitionnement n'apporte rien : BigQuery facture au
+  minimum 10 Mo par table lue, et Google le recommande pour des partitions
+  d'au moins 1 Go. Le clustering élague les blocs, sans expiration.
+- `booking_date` en tête du clustering : c'est le filtre des requêtes du
+  dashboard ; `hotel_id` ensuite, comme le prévoyait le plan.
+
+**Coût** :
+- La mesure du jour 28 (« avant / après partitionnement ») n'est pas
+  réalisable honnêtement ici : on mesurera le clustering seul, et on écrira
+  pourquoi.
+- Le même mécanisme touchera la raw : le snapshot du 31/08 expirera vers
+  le 30/10. Deux raisons désormais de reconsidérer (d) au jour 26.
+
+**Garde-fous rendus permanents** : `assert_fct_bookings_reconcilie_staging`
+et `assert_montants_encaisses_conserves` — les seuls tests qui ont vu la perte.
+
+**Date** : 2026-09-22
+
 ## Note — renvois d'ADR dans l'historique Git
 
 Du jour 13 au jour 15, les ADR ont été rédigées avec une numérotation

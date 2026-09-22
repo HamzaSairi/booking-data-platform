@@ -1101,3 +1101,39 @@ Script devenu permanent : `sql/checks/reconciliation_raw.py`.
 **À reporter dans `docs/limites.md`** : expiration à 60 jours **par date de
 partition** (bac à sable) ; le snapshot du 31/08 disparaîtra vers le 30/10.
 Sauvegardes `*_avant_reconstruction` conservées comme pièce à conviction.
+
+## Jour 18 — Modèle dimensionnel (sprint 4)
+
+**Grain de `fct_bookings`** : une ligne = une réservation, dans son dernier
+état connu. Écarté : une ligne par nuit (aucune question d'occupation), une
+ligne par changement de statut (impossible en batch, jour 10).
+Questions du dashboard (US-29) : introuvables dans le dépôt — à écrire au jour 29, et à confronter au grain.
+
+**Inspection** : réservations du 16/06 au 17/09, départs jusqu'au 18/02/2027 ;
+paiements tous `captured` ; 305 réservations sans paiement, 1 808 avec un,
+1 avec deux (la double soumission) ; 3 paiements orphelins hors grain ;
+séjours de 1 à 14 nuits ; 3 montants à zéro.
+Réservations sans paiement, par statut : completed 0/1140, confirmed 35/704, cancelled 195/195, pending 75/75.
+
+**Prédiction** (requête sur staging, avant construction) : 757 réservations
+antérieures au 24/07 perdues si le fait est partitionné en bac à sable.
+**Mesure** : 757 exactement, première date = 2026-07-24. Voir ADR-033.
+
+**Essai d'une expiration à 3 650 jours** : erreur dbt, mais table complète
+avec l'expiration demandée — état incohérent, option abandonnée.
+
+**Modèle final** : `dim_hotels`, `dim_customers` (type 1, SCD2 demain),
+`dim_dates` (plage fixe 2026-2027), `int_payments_by_booking`, `fct_bookings`
+clusterisée. `dbt build` : `PASS=35`. Requête d'analyste sur l'étoile :
+
+| Mois | Réservations | Réservé (€) | Encaissé (€) | Annulées |
+|---|---|---|---|---|
+| 2026-06 | 298 | 345226.15 | 317582.75 | 20 |
+| 2026-07 | 623 | 751320 | 670897.95 | 57 |
+| 2026-08 | 667 | 767242.75 | 659132.4 | 61 |
+| 2026-09 | 526 | 605470.8 | 451485.25 | 57 |
+
+**Incidents (de mon fait)** :
+- Commentaire `#` dans un bloc Jinja `config()` : erreur de compilation.
+- `dbt build --select +fct_bookings+` ne construit pas les dimensions (ni
+  ancêtres ni descendants du fait) : tests `relationships` en erreur.
