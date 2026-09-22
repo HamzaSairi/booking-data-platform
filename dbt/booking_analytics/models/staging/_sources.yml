@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: raw_booking
+    schema: "{{ env_var('BQ_DATASET_RAW') }}"
+    description: >
+      Couche raw : une partition par journée de données (_interval_start),
+      écrasée à chaque rejeu (ADR-020). Aucune déduplication ici (ADR-013).
+    config:
+      # Fin de la dernière journée chargée, et non l'heure du chargement :
+      # un backfill de vieilles dates ne doit pas rendre la source « fraîche ».
+      loaded_at_field: "timestamp_add(timestamp(_interval_start), interval 1 day)"
+      freshness:
+        warn_after: {count: 26, period: hour}    # un run quotidien manqué
+        error_after: {count: 50, period: hour}   # deux runs manqués
+    tables:
+      - name: customers
+      - name: bookings
+      - name: payments
+      - name: hotels
+        description: Jamais modifiée par le simulateur, alimentée par le snapshot (ADR-029).
+        config:
+          freshness: null   # une table statique serait en erreur permanente

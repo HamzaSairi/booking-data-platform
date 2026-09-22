@@ -1,0 +1,34 @@
+unit_tests:
+  - name: stg_bookings_garde_la_derniere_version_et_normalise_la_devise
+    model: stg_bookings
+    given:
+      - input: source('raw_booking', 'bookings')
+        rows:
+          - {booking_id: 1, status: pending,   currency: "EUR", updated_at: "2026-09-01 10:00:00", _interval_start: "2026-09-01"}
+          - {booking_id: 1, status: confirmed, currency: " eur", updated_at: "2026-09-02 09:00:00", _interval_start: "2026-09-02"}
+          - {booking_id: 2, status: cancelled, currency: "Eur", updated_at: "2026-09-01 12:00:00", _interval_start: "2026-09-01"}
+    expect:
+      rows:
+        - {booking_id: 1, status: confirmed, currency: "EUR"}
+        - {booking_id: 2, status: cancelled, currency: "EUR"}
+
+  - name: stg_payments_marque_les_doubles_soumissions
+    model: stg_payments
+    given:
+      - input: source('raw_booking', 'payments')
+        rows:
+          # 10 original, 11 double soumission : même instant de paiement
+          - {payment_id: 10, booking_id: 1, payment_method: card, paid_at: "2026-09-01 10:00:00.123456", created_at: "2026-09-01 10:00:00", updated_at: "2026-09-01 10:00:00", _interval_start: "2026-09-01"}
+          - {payment_id: 11, booking_id: 1, payment_method: card, paid_at: "2026-09-01 10:00:00.123456", created_at: "2026-09-01 10:05:00", updated_at: "2026-09-01 10:05:00", _interval_start: "2026-09-01"}
+          # 12 vrai second paiement de la même réservation
+          - {payment_id: 12, booking_id: 1, payment_method: card, paid_at: "2026-09-01 18:30:00", created_at: "2026-09-01 18:30:00", updated_at: "2026-09-01 18:30:00", _interval_start: "2026-09-01"}
+          # 13 et 14 en attente : paid_at nul, jamais des doublons
+          - {payment_id: 13, booking_id: 2, payment_method: card, paid_at: null, created_at: "2026-09-01 11:00:00", updated_at: "2026-09-01 11:00:00", _interval_start: "2026-09-01"}
+          - {payment_id: 14, booking_id: 2, payment_method: card, paid_at: null, created_at: "2026-09-01 11:01:00", updated_at: "2026-09-01 11:01:00", _interval_start: "2026-09-01"}
+    expect:
+      rows:
+        - {payment_id: 10, is_duplicate_submission: false}
+        - {payment_id: 11, is_duplicate_submission: true}
+        - {payment_id: 12, is_duplicate_submission: false}
+        - {payment_id: 13, is_duplicate_submission: false}
+        - {payment_id: 14, is_duplicate_submission: false}
