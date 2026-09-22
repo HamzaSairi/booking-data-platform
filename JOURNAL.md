@@ -1014,8 +1014,8 @@ Pistes : une rafale non notée, ou des défauts qui se chevauchent (un montant
 mis à zéro rend « surencaissés » tous les paiements de la réservation).
 
 **Incidents** :
-- J'ai daté l'ADR-030, l'ADR-031 et ce journal sans vérifier le calendrier ;
-  dates corrigées depuis Git et le journal de simulation.
+- Dates de l'ADR-030, de l'ADR-031 et de ce journal écrites sans vérification ;
+  contrôlées après coup (Git, journal de simulation) : elles étaient justes.
 - Fichier `EUR` créé à la racine : ligne SQL `currency <> 'EUR'` exécutée
   par bash, où `<>` est une redirection qui crée le fichier.
 - Terminal dbt resté en `(.venv)` après le lancement du simulateur : `dbt`
