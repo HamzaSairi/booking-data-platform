@@ -35,6 +35,9 @@ models:
     staging:
       +materialized: view
       +schema: "{{ env_var('BQ_DATASET_STAGING') }}"
+    intermediate:
+      +materialized: view
+      +schema: "{{ env_var('BQ_DATASET_STAGING') }}"
     marts:
       +materialized: table
       +schema: "{{ env_var('BQ_DATASET_MARTS') }}"

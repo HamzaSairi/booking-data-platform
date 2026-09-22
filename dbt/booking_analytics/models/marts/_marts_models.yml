@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: dim_hotels
+    columns:
+      - name: hotel_id
+        data_tests: [unique, not_null]
+  - name: dim_customers
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+  - name: dim_dates
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+  - name: fct_bookings
+    description: "Grain : une réservation, dans son dernier état connu."
+    columns:
+      - name: booking_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_customers'), field: customer_id}
+      - name: hotel_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_hotels'), field: hotel_id}
+      - name: booking_date
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_dates'), field: date_day}
+      - name: check_out
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_dates'), field: date_day}
