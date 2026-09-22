@@ -264,7 +264,7 @@ illisible au tour suivant.
 **Date** : 2026-09-01
 
 ## ADR-011 — Garde d'identité de base dans le fichier d'état
-**Statut** : remplacée par ADR-019 (`db_identity()` supprimé).
+**Statut** : remplacée par ADR-019 (`db_identity()` supprimé). Son objet demeurait : voir ADR-032.
 **Contexte** : `state/watermarks.json` vit sur le disque hôte et survit à un
 `docker compose down -v`, qui détruit pourtant le volume Postgres.
 **Décision** : stocker `pg_control_system().system_identifier` à côté des
@@ -1109,6 +1109,62 @@ Mutation `updated_at asc` → `FAIL` avec le diff `confirmed→pending`, puis
 restauration. `dbt build --select staging` : `PASS=16`.
 
 **Date** : 2026-09-17
+
+## ADR-032 — Une couche raw ne doit contenir qu'une seule instance de source
+
+**Contexte** : un doublon de paiement présent en source (1106/1772) n'était
+pas reconnu par `stg_payments`. Cause mesurée le 22/09 : en raw, les
+partitions du 31/08 (snapshot), du 01 au 04/09 et du 06 au 10/09 venaient
+d'une **autre base** que la source actuelle. Même graine (ADR-004), donc mêmes
+identifiants et mêmes valeurs, mais tous les timestamps décalés de +150,2 s :
+deux seeds lancés à 2 min 30 s d'intervalle. Origine : le test depuis zéro
+du jour 15, où le clone et l'original ont écrit tour à tour dans le même
+BigQuery. Avec l'écrasement de partition (ADR-020), chaque journée contenait
+ce qu'avait écrit le dernier environnement à l'avoir traitée.
+**Aucun contrôle ne l'a vu** : comptages par table identiques, réconciliation
+du jour 16 juste, 16 tests dbt verts, fraîcheur cohérente. Seul un contrôle
+comparant des **valeurs** entre deux partitions pouvait le révéler.
+
+**Correction** (22/09) : sauvegarde des 4 tables (`*_avant_reconstruction`),
+suppression de toutes les partitions, snapshot, backfill du 01 au 21/09
+(`--reprocess-behavior completed --max-active-runs 1`, 21 runs, aucun échec).
+Réconciliation : partitions égales à la source, décalage de 0,0 s partout,
+doubles soumissions 1/1, réservations 2 114/2 114.
+
+**Options pour la suite** :
+(a) procédure seule — environnements isolés, sans contrôle technique ;
+(b) isoler chaque environnement dans ses propres datasets ;
+(c) tracer l'instance : colonne `_source_system_id`
+(`pg_control_system().system_identifier`) écrite par l'extraction et le
+snapshot, et test dbt exigeant une valeur unique sur les 4 tables raw ;
+(d) garde au chargement refusant d'écrire si la table contient un autre
+identifiant.
+
+**Décision** : (b) et (c). (d) non retenue pour l'instant.
+
+**Raison** :
+- (b) supprime la cause : le test depuis zéro utilisera des datasets suffixés
+  (`BQ_DATASET_*` dans le `.env` du clone). Les variables existent déjà
+  (ADR-030) ; seule la procédure change → runbook.
+- (c) détecte ce que (b) ne peut empêcher : une source recréée
+  (`down -v`, nouvel `initdb`) change d'identifiant. Le test échoue alors
+  jusqu'à ce que la raw soit reconstruite — c'est le comportement voulu, car
+  une raw issue d'une base détruite n'est plus une copie de la source.
+- C'est l'objet de l'ADR-011, retirée par l'ADR-019 qui la jugeait sans
+  objet une fois l'état local supprimé. L'état n'était pas le seul héritage
+  possible : la raw elle-même l'est.
+- (d) coûterait une requête par chargement. Le test dbt arrête la chaîne
+  avant les marts, ce qui suffit à cette échelle.
+
+**Coût** : une colonne technique de plus ; toute recréation de la source
+impose une reconstruction complète de la raw. La reconstruction lit l'état
+actuel : les 8 fantômes ont disparu de la raw, et avec eux la preuve des
+suppressions, conservée seulement dans les sauvegardes.
+
+**Statut** : (b) à écrire dans le runbook ; (c) à implémenter avec les tests
+du jour 20. Contrôle permanent : `sql/checks/reconciliation_raw.py`.
+
+**Date** : 2026-09-22
 
 ## Note — renvois d'ADR dans l'historique Git
 

@@ -1056,3 +1056,48 @@ que l'extraction doit lire.
 - Fraîcheur après chargement : **error**, âge 106 h — dernière
   journée active 2026-09-17, donc `loaded_at` = 2026-09-18 00:00 UTC.
   Une source calme ressemble à un pipeline arrêté (ADR-031, décision 4).
+
+**Reconstruction de la raw — prédiction** (avant exécution) : 21 runs de
+backfill (01/09 → 21/09) plus le snapshot du 31/08 ; chaque partition égale
+aux lignes source de sa fenêtre ; décalage raw − source à 0,0 s partout ;
+doubles soumissions 1 = 1 ; `stg_bookings` à 2 114 lignes, soit les 8 fantômes
+disparus — la reconstruction lit l'état actuel, les lignes supprimées n'y
+figurent plus (la sauvegarde conserve la preuve).
+
+**Correction de la prédiction** : `list-runs` montre que les runs des
+journées du 17 au 21/09 ont démarré le 22/09 entre 09:57 et 09:58 UTC, au
+redémarrage de Docker (politique de redémarrage des conteneurs), donc
+**avant** le commit de la prédiction. Les « 4 runs de rattrapage » étaient
+déjà exécutés : ce n'était pas une prédiction. Le tableau par journée reste
+juste (journées du 18 au 21 vides en source).
+
+**Vérification de staging sur données réelles** : partition du 17/09
+identique à la source (76 / 230 / 94) ; devise 4 en raw → 0 en staging ;
+fantômes 8 = 8 `hard_delete`. Mais doubles soumissions : source 1, stg **0**.
+
+**Diagnostic** : paiement 1106 en raw avec `paid_at` 11:09:40.47, contre
+11:07:10.26 en source. Décalage raw − source mesuré par partition : +150,2 s
+sur le 31/08, du 01 au 04/09 et du 06 au 10/09 ; 0,0 s sur le 05/09 et du 11
+au 17/09. Deux instances de source mélangées dans la raw → ADR-032.
+
+**Écart 6 → 20 expliqué** (journal de simulation, champ `kind`) : le
+simulateur a tourné bien plus que les 7 tours affichés (122 réservations
+insérées). 17 défauts journalisés ; les 3 de plus viennent des montants mis
+à zéro, qui rendent « surencaissés » les paiements existants.
+
+**Reconstruction** : sauvegarde, suppression des partitions (12, 2, 16, 16),
+snapshot (49 / 413 / 1 514 / 1 388), backfill de 21 runs en ~2 min 15 s,
+aucun échec. Réconciliation conforme sur tous les critères de la prédiction.
+Script devenu permanent : `sql/checks/reconciliation_raw.py`.
+
+**Leçons** :
+- Des comptages égaux ne prouvent pas que deux jeux de données sont les
+  mêmes. Il faut comparer des valeurs.
+- Le test depuis zéro du jour 15 a réussi sur son propre critère, et
+  corrompu la raw en silence.
+- Airflow redémarre avec Docker et rattrape seul les journées manquées :
+  à noter dans le runbook.
+
+**À reporter dans `docs/limites.md`** : expiration à 60 jours **par date de
+partition** (bac à sable) ; le snapshot du 31/08 disparaîtra vers le 30/10.
+Sauvegardes `*_avant_reconstruction` conservées comme pièce à conviction.
