@@ -305,7 +305,7 @@ quotidiennement. Serait obligatoire sur une table de production.
 **Date** : 2026-09-02
 
 ## ADR-013 — Déduplication à la lecture plutôt qu'à l'écriture
-**Statut** : complétée par ADR-020. L'écriture se fait par écrasement de partition ; la déduplication à la lecture reste nécessaire.
+**Statut** : complétée par ADR-020. L'écriture se fait par écrasement de partition ; la déduplication à la lecture reste nécessaire. Vues `v_*` remplacées par les modèles dbt `stg_*` (ADR-031).
 
 **Date** : 2026-09-03
 
@@ -1057,6 +1057,58 @@ directement là où lira le dashboard. Acceptable seul, pas en équipe
 tout `dbt run`, puis modèle jetable construit et supprimé.
 
 **Date** : 2026-09-15
+
+## ADR-031 — Staging dbt : départage, doubles soumissions marquées, fraîcheur métier
+
+**Contexte** : les vues `v_*` de l'ADR-013 sont remplacées par quatre modèles
+dbt `stg_*` (vues). Inspection préalable (17/09) : la raw ne contenait aucun
+défaut, le simulateur n'ayant pas tourné depuis la reconstruction du jour 15 ;
+le défaut « doublon de paiement » insère une copie avec un **nouveau**
+`payment_id` (`simulator/generate.py`, défaut 3).
+
+**Décision 1 — Départage `updated_at DESC, _interval_start DESC`**, au lieu du
+`_ingested_at DESC` de l'ADR-013.
+*Raison* : depuis l'ADR-020, un backfill qui rejoue une ancienne fenêtre lui
+donne un `_ingested_at` plus récent que la fenêtre courante ; l'ancienne
+version gagnerait l'égalité. `_interval_start` ne dépend pas de l'ordre des
+rejeux. Avec des fenêtres disjointes, l'égalité sur `updated_at` entre deux
+partitions est impossible par construction : le second critère garantit un
+résultat déterministe si ce principe venait à casser.
+
+**Décision 2 — Doubles soumissions marquées (`is_duplicate_submission`), pas
+supprimées.**
+*Options* : (a) `ROW_NUMBER` sur `payment_id` — ne voit rien, clé différente ;
+(b) suppression sur clé métier ; (c) marquage sur clé métier.
+*Décision* : (c), clé `(booking_id, payment_method, paid_at)`, la première
+soumission (`created_at`, puis `payment_id`) restant non marquée.
+*Raison* : retirer un encaissement est une décision métier, qui appartient
+aux marts ; staging la rend visible (ADR-002 : compter, ne pas cacher).
+`amount` est exclu de la clé, parce que le défaut de surencaissement le modifie
+après coup. Un `paid_at` nul (paiement non réalisé) n'est jamais un doublon.
+*Limite* : la copie du simulateur a un `paid_at` identique à la microseconde.
+Une vraie double soumission produit deux captures à quelques secondes
+d'intervalle : en production, la clé serait une fenêtre de temps (ex. moins de
+2 min), avec des faux positifs à mesurer. → `docs/limites.md`.
+
+**Décision 3 — Normalisation minimale** : devise `upper(trim())`, email
+`lower(trim())`. Montants à zéro et emails partagés **non filtrés** : ce sont
+des règles métier, testées au jour 20.
+
+**Décision 4 — Fraîcheur mesurée sur `_interval_start + 1 jour`**, pas sur
+`_ingested_at` ; seuils 26 h (avertissement) et 50 h (erreur) ; `hotels`
+exclue, car statique (ADR-029).
+*Raison* : `_ingested_at` est rafraîchi par un backfill de dates anciennes
+— une source serait « fraîche » sans aucune donnée récente (scénario S3).
+*Limite* : une fenêtre sans aucune ligne modifiée ne crée pas de partition
+(ADR-020). Une source calme et un pipeline arrêté donnent le même symptôme ;
+c'est l'objet de `pipeline_metrics` (jour 28).
+
+**Vérification** : deux tests unitaires sur des lignes fabriquées (dernière
+version, casse de la devise, doubles soumissions, `paid_at` nul), `PASS`.
+Mutation `updated_at asc` → `FAIL` avec le diff `confirmed→pending`, puis
+restauration. `dbt build --select staging` : `PASS=16`.
+
+**Date** : 2026-09-17
 
 ## Note — renvois d'ADR dans l'historique Git
 

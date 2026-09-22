@@ -969,3 +969,63 @@ journées pour la tester réellement.
 l'ADR-013, qui prévoyait leur remplacement par dbt. Avant de les supprimer,
 chercher ce qui les lit encore (`git grep -n "v_bookings\|v_hotels"`),
 notamment `tests/test_idempotence.py`.
+
+## Jour 17 — Staging dbt (sprint 4)
+
+**Fait** : sources déclarées avec fraîcheur, quatre vues `stg_*`, 10 tests de
+données, 2 tests unitaires, vues `v_*` supprimées (seul lecteur :
+`sql/checks/raw_doublons.sql`, repointé sur `stg_*`). ADR-031.
+
+**Inspection** :
+- Source et raw sans aucun défaut : volumes du seed exacts (500 / 50 / 2 000),
+  le simulateur n'avait pas tourné depuis le jour 15.
+- Doublon de paiement : nouveau `payment_id`, invisible pour une
+  déduplication par clé primaire → clé métier (ADR-031).
+
+**Fraîcheur** : `ERROR STALE` sur customers, bookings et payments (Airflow
+arrêté depuis le jour 15) ; hotels exclue, 3 sources testées.
+Prédiction : non faite avant l'exécution — le protocole « prédire, puis
+mesurer » n'a pas été appliqué ici.
+
+**Tests unitaires** : `PASS=2`. Mutation `order by updated_at asc` →
+`FAIL`, diff `confirmed→pending` sur la réservation 1 ; fichier restauré.
+`dbt build` exécute les tests unitaires avant de créer la vue concernée.
+
+**Build** : `PASS=16`, vues créées sans aucun octet traité. Le vert porte sur
+une raw sans défaut : il prouve que les modèles tournent, pas qu'ils corrigent.
+
+**Simulateur** : 10 min à `--defect-rate 0.1`, interrompu au tour 7, 6 défauts
+affichés. Source ensuite : 4 devises non normalisées, 1 double soumission,
+3 montants à zéro, 5 emails partagés, 3 paiements orphelins,
+4 surencaissements (20 au total).
+Vérité terrain (`state/simulation_log.jsonl`, champ `kind`), 2026-09-17 :
+
+| Défaut | Journal de simulation | Constaté en source |
+|---|---|---|
+| `currency_case` | 4 | 4 |
+| `duplicate_payment` | 1 | 1 |
+| `zero_amount` | 3 | 3 |
+| `duplicate_email` | 5 | 5 |
+| `orphan_payment` | 3 | 3 |
+| `overpayment` | 1 | 4 |
+
+Tout écart entre les deux colonnes est à expliquer au début du jour 18.
+Pistes : une rafale non notée, ou des défauts qui se chevauchent (un montant
+mis à zéro rend « surencaissés » tous les paiements de la réservation).
+
+**Incidents** :
+- J'ai daté l'ADR-030, l'ADR-031 et ce journal sans vérifier le calendrier ;
+  dates corrigées depuis Git et le journal de simulation.
+- Fichier `EUR` créé à la racine : ligne SQL `currency <> 'EUR'` exécutée
+  par bash, où `<>` est une redirection qui crée le fichier.
+- Terminal dbt resté en `(.venv)` après le lancement du simulateur : `dbt`
+  introuvable, deux fois. Le garde-fou `[ ... ]` a bien bloqué la chaîne, mais
+  en silence → il affiche désormais `ECHEC : mauvais venv`.
+  Règle : un terminal par environnement.
+- `\ ` (espace après la barre oblique) dans une commande collée : la
+  continuation de ligne casse.
+
+**Pour demain (avant le jour 18)** : charger la journée du 17/09, close à
+minuit, par le DAG et non à la main (ADR-027). Puis, dans `stg_*` : devises
+toutes `EUR` alors que la raw en contient 4 autres ; exactement 1
+`is_duplicate_submission` ; 1 réservation supprimée restée fantôme.
