@@ -6,9 +6,12 @@ models:
       - name: hotel_id
         data_tests: [unique, not_null]
   - name: dim_customers
+    description: "Grain : une version d'un client (SCD2)."
     columns:
-      - name: customer_id
+      - name: customer_sk
         data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
   - name: dim_dates
     columns:
       - name: date_day
@@ -22,6 +25,11 @@ models:
         data_tests:
           - relationships:
               arguments: {to: ref('dim_customers'), field: customer_id}
+      - name: customer_sk
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_customers'), field: customer_sk}
       - name: hotel_id
         data_tests:
           - relationships:

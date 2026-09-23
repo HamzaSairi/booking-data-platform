@@ -8,10 +8,12 @@
 -- Anomalies exposées, jamais filtrées : montant à zéro, surencaissement.
 -- Hors grain : paiements orphelins, sans réservation (jour 20).
 with b as (select * from {{ ref('stg_bookings') }}),
-     p as (select * from {{ ref('int_payments_by_booking') }})
+     p as (select * from {{ ref('int_payments_by_booking') }}),
+     c as (select customer_sk, customer_id, valid_from, valid_to from {{ ref('dim_customers') }})
 select
     b.booking_id,
     b.customer_id,
+    c.customer_sk,   -- version du client valide au moment de la réservation
     b.hotel_id,
     date(b.created_at) as booking_date,
     b.check_in,
@@ -30,3 +32,7 @@ select
     b.updated_at
 from b
 left join p using (booking_id)
+left join c
+  on c.customer_id = b.customer_id
+ and b.created_at >= c.valid_from
+ and (b.created_at < c.valid_to or c.valid_to is null)
