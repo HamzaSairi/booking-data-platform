@@ -1219,3 +1219,53 @@ messages de commit de cette période citent ADR-012 à ADR-020 pour les
 actuelles ADR-019 à ADR-027. Par exemple, « ADR-020 » dans f0e75b4 et
 a6ab15c désigne l'ADR-027. Renvois corrigés le 11/09 dans le runbook et
 dans le code modifié au jour 15.
+
+## ADR-034 — SCD2 des clients reconstruit depuis la raw, sans snapshot dbt
+
+**Contexte** : le jour 19 prévoit un snapshot dbt. Premier run réussi
+(création de table), second refusé : « DML queries are not allowed in the
+free tier ». Un snapshot fait un `MERGE` à chaque run ; le bac à sable
+(ADR-008) interdit tout DML. Même en bac à sable payant, la table du
+snapshot, jamais recréée, aurait expiré 60 jours après sa création (22/11).
+
+**Mesures (23/09)** :
+- Jointure du plan (`valid_from = updated_at`) : 297 réservations sur 2 114
+  sans version, toutes portées par les 87 clients modifiés après le 31/08.
+  Aucune réservation antérieure à la création de son client.
+- Raw : 500 clients, 500 versions, aucun historique. Toutes les partitions
+  ont été rechargées le 22/09 (10:16–10:27) ; celle du 31/08 ne compte plus
+  que 413 clients. Rejouer un intervalle passé relit une source mutable :
+  87 historiques effacés. Le pipeline est idempotent, pas reproductible.
+- `sauvegarde_12_09` : noms identiques (500/500, Faker à graine fixe), mais
+  aucune date de création commune et 268 versions « antérieures » à celles
+  de la sauvegarde : autre incarnation de la base (remise à zéro entre le
+  12 et le 22/09). L'utiliser aurait fabriqué 241 faux changements de palier.
+  Une clé naturelle identique ne prouve pas une entité identique.
+
+**Options** : (a) activer la facturation ; (b) recalculer le SCD2 depuis la
+raw dans une table recréée à chaque run ; (c) garder un snapshot à run unique.
+
+**Décision** : (b). `stg_customers_versions` (toutes les versions, seul lieu
+du nettoyage), `stg_customers` (dernière version), `dim_customers` (versions
+bornées par `LEAD`, clé `customer_sk`). Première version valide depuis la
+création du client (0 réservation antérieure, mesuré) ; `observed_from`
+conserve la date réelle d'observation.
+
+**Raisons** : aucun DML ; l'expiration à 60 jours est sans effet sur une
+table recréée ; même motif que la reconstruction d'état du CDC (sprint 5).
+
+**Coûts et limites** :
+- Une version par chargement : le 23/09, environ 241 modifications pour
+  188 clients modifiés, dont au moins 57 invisibles pour le batch.
+- Tout rejeu de `customers` sur un intervalle passé détruit l'historique
+  (règle ajoutée au runbook).
+- Les partitions raw expirent à 60 jours : les premières versions (31/08)
+  disparaîtront vers le 30/10.
+- L'état d'un client avant sa première observation est inconnu : sa première
+  version est réputée valide depuis sa création.
+
+**En production** : snapshot dbt ou CDC, et zone d'atterrissage immuable
+(fichiers jamais réécrits) plutôt qu'écrasement de partitions.
+`sauvegarde_12_09` supprimée après mesure.
+
+**Date** : 2026-09-23

@@ -406,3 +406,27 @@ tout backfill.
 - **Un callback en échec** est consigné dans les logs d'Airflow, jamais
   remonté.
 - **S2 n'a jamais été exécuté.**
+
+## Rejeu d'un intervalle passé sur `customers` (ajout jour 19)
+
+**Risque** : l'extraction relit Postgres dans son état actuel et l'écrasement
+de partition remplace l'ancienne version. Chaque client modifié depuis perd sa
+version d'origine, et `dim_customers` perd son historique, sans aucune erreur.
+Incident réel : 87 historiques effacés par le rechargement du 22/09 (ADR-034).
+
+**Règle** : ne jamais backfiller `customers` sur un intervalle passé. Si un
+backfill des autres tables est nécessaire, exclure le TaskGroup `customers`.
+Si c'est inévitable : copier d'abord la table raw (`bq cp`), puis réinjecter
+les versions perdues.
+
+## Rejeu d'un intervalle passé sur `customers` (ajout jour 19)
+
+**Risque** : l'extraction relit Postgres dans son état actuel et l'écrasement
+de partition remplace l'ancienne version. Chaque client modifié depuis perd sa
+version d'origine, et `dim_customers` perd son historique, sans aucune erreur.
+Incident réel : 87 historiques effacés par le rechargement du 22/09 (ADR-034).
+
+**Règle** : ne jamais backfiller `customers` sur un intervalle passé. Si un
+backfill des autres tables est nécessaire, exclure le TaskGroup `customers`.
+Si c'est inévitable : copier d'abord la table raw (`bq cp`), puis réinjecter
+les versions perdues.
