@@ -365,7 +365,7 @@ tout défaut du simulateur écrivant un `updated_at` dans le passé (ADR-003).
 ### Résolution
 
 ```bash
-af backfill list                   # aucun backfill fantôme ne doit traîner (jour 13)
+af dags list-runs ingestion_batch --state queued   # `backfill list` n'existe pas en Airflow 3 (constaté jour 19)
 af dags list-runs ingestion_batch --state running
 
 af backfill create --dag-id ingestion_batch \
@@ -419,14 +419,23 @@ backfill des autres tables est nécessaire, exclure le TaskGroup `customers`.
 Si c'est inévitable : copier d'abord la table raw (`bq cp`), puis réinjecter
 les versions perdues.
 
-## Rejeu d'un intervalle passé sur `customers` (ajout jour 19)
+## Démarrer Airflow et charger un intervalle (ajout jour 19)
 
-**Risque** : l'extraction relit Postgres dans son état actuel et l'écrasement
-de partition remplace l'ancienne version. Chaque client modifié depuis perd sa
-version d'origine, et `dim_customers` perd son historique, sans aucune erreur.
-Incident réel : 87 historiques effacés par le rechargement du 22/09 (ADR-034).
+```bash
+docker compose --profile airflow up -d      # sans --profile, seul Postgres démarre
+alias af='docker compose exec airflow-scheduler airflow'
+af backfill create --dag-id ingestion_batch \
+  --from-date <début> --to-date <début> \
+  --reprocess-behavior none --max-active-runs 1 --dry-run
+```
 
-**Règle** : ne jamais backfiller `customers` sur un intervalle passé. Si un
-backfill des autres tables est nécessaire, exclure le TaskGroup `customers`.
-Si c'est inévitable : copier d'abord la table raw (`bq cp`), puis réinjecter
-les versions perdues.
+- `--from-date` désigne le **début** de l'intervalle (date logique) ; le run
+  s'appelle `backfill__<fin>`. Toujours passer par `--dry-run` d'abord.
+- `--reprocess-behavior none` refuse de rejouer un intervalle réussi : c'est la
+  règle de non-rejeu de `customers` appliquée par l'outil.
+- Airflow 3 n'exécute pas un backfill sur un DAG en pause (le run reste en
+  `queued`). Le DAG reste actif en fonctionnement normal.
+- `catchup=True` : au démarrage, le scheduler lance seul les intervalles sans
+  run. Sans risque (jamais chargés, rien d'écrasé), mais c'est ce mécanisme
+  qui a produit le rechargement du 22/09.
+

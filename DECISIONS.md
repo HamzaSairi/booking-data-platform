@@ -1269,3 +1269,13 @@ table recréée ; même motif que la reconstruction d'état du CDC (sprint 5).
 `sauvegarde_12_09` supprimée après mesure.
 
 **Date** : 2026-09-23
+
+**Révision (24/09)** : la première version de chaque client a désormais
+`valid_from` à NULL (valide « depuis toujours »), et non plus la date de
+création. Motif : 4 réservations créées avant leur client (dimension tardive
+injectée, `created_at` antidaté de 2 à 3 jours) n'avaient aucune version.
+Le test `not_null` sur `customer_sk` les a détectées. Elles sont rattachées à
+la première version et exposées par `is_late_arriving_customer`.
+Preuve du SCD2 : 522 réservations sur 2 451 (21 %) porteraient le mauvais
+palier avec une jointure sur la version courante.
+

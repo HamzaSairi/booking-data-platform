@@ -3,6 +3,7 @@
 ## Jour 1 — 2026-08-25
 
 **Fait**
+
 - Environnement installé : Docker Desktop, Python 3.12, Git, gcloud CLI 581.0.0
 - Bascule de PowerShell vers WSL2 / Ubuntu 24.04 comme environnement de travail
 - Dépôt créé, arborescence des 9 dossiers, .gitignore commité en premier
@@ -1137,3 +1138,54 @@ clusterisée. `dbt build` : `PASS=35`. Requête d'analyste sur l'étoile :
 - Commentaire `#` dans un bloc Jinja `config()` : erreur de compilation.
 - `dbt build --select +fct_bookings+` ne construit pas les dimensions (ni
   ancêtres ni descendants du fait) : tests `relationships` en erreur.
+
+## Jour 19 — SCD2 (sprint 4), 23 et 24/09
+
+*Entrée rédigée le 24/09 : celle du 23/09 n'avait pas été écrite.*
+
+**Prévu** : snapshot dbt. **Réalisé** : SCD2 recalculé depuis la raw (ADR-034).
+
+### 23/09 : pourquoi pas de snapshot
+
+| Mesure | Ma prédiction | Prédiction Claude | Résultat |
+|---|---|---|---|
+| Snapshot : second run | non notée | réussite | refusé (DML interdit en bac à sable) |
+| Raw : clients à ≥ 2 versions | non notée | > 0 | 0 |
+| Sauvegarde du 12/09 = même base ? | non notée | non | non (0 date de création commune) |
+| Réservations sans version, jointure du plan | non notée | ~430 | 297 |
+| `dbt build` | non notée | PASS=40 | PASS=40 |
+| Clients modifiés par la rafale | non notée | 20–80 | 188 |
+
+### 24/09 : chargement et preuve
+
+Chargement de l'intervalle du 23/09 par backfill (`--reprocess-behavior none`).
+Resté en `queued` tant que le DAG était en pause ; après la remise en service,
+2 runs planifiés en plus (21 et 22/09, 0 ligne). Raw : 188 clients (= Postgres),
+531 réservations ; partitions du 31/08 et du 17/09 intactes.
+
+| Mesure | Ma prédiction | Prédiction Claude | Résultat |
+|---|---|---|---|
+| Réservations en raw au 23/09 | non notée | 350–500 | 531 (oubli des 127 réservations vieillies) |
+| Clients à 2 versions | non notée | 184 | 184 |
+| Paliers changés | non notée | ~90 | 131 (71 % des modifications) |
+| Réservations au mauvais palier, jointure naïve | non notée | ~350 | 522 sur 2 451 (21 %) |
+| Clients utilisables pour la démonstration | non notée | 10–40 | 36 |
+| Réservations sans version | non notée | 0 | 4 (dimension tardive) |
+
+**Preuve** : le client 499 réserve le 23/09 à 11:51 en `silver`, puis à 11:57
+en `gold`. Le client 318 est `standard` sur 7 réservations de juin à
+septembre, puis `gold` le 23/09. Une jointure naïve afficherait `gold` partout.
+
+**Dimension tardive** : 4 réservations (clients 501 à 504), antidatées de 2 à
+3 jours, sans version. Le test `not_null` a échoué ; première version désormais
+valide depuis toujours, cas exposés par `is_late_arriving_customer`. PASS=40.
+
+**Leçons** :
+- Idempotent n'est pas reproductible : un rejeu relit une source mutable
+  (87 historiques perdus le 22/09).
+- Même nom ≠ même client après une remise à zéro (Faker à graine fixe).
+- Le catchup d'Airflow agit comme un backfill silencieux.
+- Mon runbook contenait une commande qui n'existe pas (`backfill list`).
+- Prédictions du 23/09 non écrites : on ne peut plus savoir ce que j'attendais.
+
+**Reste** : dataset `doit_echouer` (journal d'audit), à traiter au jour 20.
