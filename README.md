@@ -157,3 +157,15 @@ make airflow-down       # libère la mémoire quand Airflow n'est pas utile
 ## Décisions d'architecture
 
 Voir [DECISIONS.md](./DECISIONS.md).
+
+## Modèle et qualité des données
+
+![Lineage dbt](docs/img/lineage.png)
+
+- **Schéma en étoile** : `fct_bookings` (grain : une réservation), dimensions
+  clients (SCD2), hôtels, dates.
+- **SCD2** : le palier de fidélité au moment de la réservation. Une jointure
+  sur la version courante attribuerait le mauvais palier à 21 % des
+  réservations (mesuré le 24/09).
+- **Tests** : invariants en `error`, six défauts de source connus comptés en
+  `warn`, dérive des taux en `error` ([ADR-036](DECISIONS.md)).

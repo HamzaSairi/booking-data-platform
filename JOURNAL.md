@@ -1189,3 +1189,33 @@ valide depuis toujours, cas exposés par `is_late_arriving_customer`. PASS=40.
 - Prédictions du 23/09 non écrites : on ne peut plus savoir ce que j'attendais.
 
 **Reste** : dataset `doit_echouer` (journal d'audit), à traiter au jour 20.
+
+## Jour 20 — Tests, documentation, revue du sprint 4 (24/09)
+
+**Réalisé** : politique de tests (ADR-036), paiements orphelins exposés
+(`orphan_payments`), contrats source en `accepted_values`, `relationships`
+en staging, plancher et pic de volume, lineage (`docs/img/`).
+Build : `PASS=59 WARN=7 ERROR=0`.
+
+**Faille découverte** : `doit_echouer` créé le 01/09 par `booking-sa` (journal
+d'audit). Le test de moindre privilège du jour 6 avait échoué sans être
+consigné. Correction prévue au jour 26 (ADR-035). Dataset supprimé.
+
+**Prédictions Claude** : toutes justes sur le build (44/6, 45/7, 59/7) et sur
+le volume (17/09 ×4,4 et 23/09 ×12,6). Fausses : surencaissements (14 pour
+3–12) et `CHECK` sur les statuts (présents en source).
+
+**Décision** : `stg_customers` n'alimente plus aucun modèle depuis le jour 19.
+Conservée : vue « état actuel » pour les analystes, cible des `relationships`,
+coût nul (vue).
+
+### Rétrospective du sprint 4 (jours 16 à 20)
+
+**Livré** : staging dédoublonné, étoile documentée (grain déclaré), SCD2 des
+clients avec sa preuve (client 499), 64 tests dont 7 défauts suivis.
+**Incidents mesurés** : 757 réservations perdues par expiration (jour 18),
+DML interdit en bac à sable (jour 19), 87 historiques effacés par un
+rattrapage (jour 19), faille IAM (jour 20).
+- **Ce qui a bien marché** : mesurer avant de décider. Chaque surprise (expiration des partitions, DML interdit, fausse sauvegarde, dimension tardive) a été attrapée par une mesure ou par un test, jamais par hasard. Les scripts qui n'écrivent rien quand un motif manque ont évité tout fichier à moitié modifié.
+- **Ce qui a mal marché** : la rigueur du suivi. Les prédictions du 23/09 n'ont pas été écrites, l'entrée de journal du jour 19 a été perdue sans que je le remarque, et le résultat du test de sécurité du jour 6 n'a jamais été consigné. Plusieurs commandes ont été lancées dans le mauvais environnement ou avec une syntaxe Airflow que je n'avais pas vérifiée.
+- **Ce que je change au sprint 5** : écrire la prédiction dans JOURNAL.md avant chaque mesure, et vérifier git status ainsi que la fin du journal avant chaque commit.

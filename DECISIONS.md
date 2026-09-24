@@ -1279,3 +1279,67 @@ la première version et exposées par `is_late_arriving_customer`.
 Preuve du SCD2 : 522 réservations sur 2 451 (21 %) porteraient le mauvais
 palier avec une jointure sur la version courante.
 
+
+## ADR-035 — Le compte de service peut créer des datasets : moindre privilège à resserrer
+
+**Contexte** : jour 6, `booking-sa` reçoit `bigquery.dataEditor` et
+`bigquery.jobUser` au niveau du projet. Un test (`doit_echouer`) devait prouver
+qu'il ne pouvait pas créer de dataset.
+
+**Constat (24/09)** : journal d'audit, `InsertDataset` par `booking-sa` le
+01/09 à 15:51. Le test a réussi, et ce résultat n'a été consigné nulle part
+pendant 23 jours. `dataEditor` au niveau du projet inclut
+`bigquery.datasets.create` et l'écriture sur toutes les tables, raw compris :
+une erreur de dbt pourrait écraser la seule couche non reconstructible (ADR-034).
+
+**Décision** : correction au jour 26, sous Terraform. `dataEditor` accordé par
+dataset (raw pour l'ingestion ; staging et marts pour dbt), `jobUser` au
+projet. Idéalement, deux comptes distincts (ingestion, transformation).
+D'ici là : risque accepté (projet personnel, aucune donnée réelle).
+
+**Leçon** : un test de sécurité dont le résultat n'est pas consigné ne protège
+de rien.
+
+**Date** : 2026-09-24
+
+## ADR-036 — Politique de tests : invariants en error, défauts connus en warn, dérive en error
+
+**Contexte** : le simulateur injecte six défauts (ADR-005). Un test en `error`
+sur un défaut voulu rendrait le build rouge en permanence, et un build
+toujours rouge n'est plus lu. Désactiver ces tests reviendrait à les cacher.
+
+**Décision** :
+1. **Invariants en `error`** : clés, `relationships`, `accepted_values` alignés
+   sur les `CHECK` de la source (le contrat, pas l'observé : les statuts de
+   paiement `pending`, `refunded`, `failed` sont acceptés sans avoir été vus),
+   départ après arrivée, montants positifs ou nuls, réconciliation,
+   conservation des montants, continuité du SCD2, unicité des versions.
+2. **Défauts connus en `warn`** : un test par défaut, qui les compte. Au
+   24/09 : 14 surencaissements, 9 montants nuls, 6 emails en double,
+   4 paiements orphelins (exposés dans `orphan_payments`), 4 clients tardifs,
+   3 doubles soumissions.
+3. **Dérive en `error`** : chaque taux doit rester sous environ 3 fois son
+   niveau du 24/09. Seuils par défaut, car les populations diffèrent
+   (6 emails en double sur 504 clients font déjà 1,19 %).
+4. **Volume** : plancher en `error`. En batch, le volume ne peut que croître,
+   puisque les suppressions sont invisibles : 2 451 au 24/09, à relever à
+   chaque revue de sprint, à revoir au sprint 5 (le CDC propage les
+   suppressions). Pic en `warn` au-delà de 4 fois la médiane des 14 jours
+   actifs précédents (signalés : 17/09 ×4,4 et 23/09 ×12,6, rafales du
+   simulateur).
+5. **Pas de `dbt-utils`** : tout s'écrit en tests singuliers courts. Une
+   dépendance et une étape `dbt deps` de moins en CI.
+
+**Pourquoi tester ce que la source garantit déjà** : la source impose ses
+`CHECK` et ses clés étrangères ; ces tests ne peuvent échouer que par le
+pipeline ou par un changement de schéma. Exemple attendu : le 30/10,
+l'expiration de la partition raw du 31/08 retirera 413 clients de staging,
+et le test `relationships` réservations → clients sera le seul à le voir.
+
+**Pièges relevés** : `--store-failures` crée un dataset `dbt_test__audit`
+(à supprimer après usage) ; une dimension tardive chargée dans un intervalle
+postérieur à sa réservation rendrait `relationships` rouge pendant un jour.
+
+**Résultat** : build du 24/09, `PASS=59 WARN=7 ERROR=0`.
+
+**Date** : 2026-09-24
