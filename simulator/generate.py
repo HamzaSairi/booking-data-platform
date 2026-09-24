@@ -367,7 +367,7 @@ def delete_old_pending(cur, pct: float = 0.01) -> int:
 
 
 def inject_defects(cur, rate: float) -> Counter:
-    """Injecte les defauts de qualite que le schema laisse passer (ADR-003).
+    """Injecte les defauts de qualite que le schema laisse passer (ADR-005).
 
     Interpretation du taux : chaque type de defaut a une probabilite `rate`
     de survenir a chaque tour. Avec 7 types et rate=0.05, cela donne environ

@@ -1,26 +1,90 @@
 version: 2
 
+# Tests de staging (ADR-036) : les accepted_values reprennent les CHECK de la
+# source (contrat), pas les valeurs observées. Les relationships vérifient le
+# pipeline (la source impose déjà ses clés étrangères) : un échec signale une
+# perte d'ingestion, par exemple l'expiration d'une partition raw.
+
 models:
   - name: stg_hotels
+    description: "Grain : un hôtel, dernière version connue."
     columns:
       - name: hotel_id
         data_tests: [unique, not_null]
+      - name: stars
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
+
   - name: stg_customers
+    description: "Grain : un client, dernière version connue (voir stg_customers_versions)."
     columns:
       - name: customer_id
         data_tests: [unique, not_null]
+      - name: email
+        data_tests: [not_null]
+      - name: loyalty_tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['standard', 'silver', 'gold']
+
+  - name: stg_customers_versions
+    description: >
+      Grain : une version d'un client (customer_id, updated_at), une par
+      chargement. Seul lieu du nettoyage des clients (ADR-034).
+    columns:
+      - name: customer_id
+        data_tests: [not_null]
+      - name: updated_at
+        data_tests: [not_null]
+
   - name: stg_bookings
+    description: "Grain : une réservation, dernière version connue."
     columns:
       - name: booking_id
         data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_customers'), field: customer_id}
+      - name: hotel_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_hotels'), field: hotel_id}
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'confirmed', 'cancelled', 'completed']
       - name: currency
         data_tests:
           - accepted_values:
               arguments:
                 values: ['EUR']
+
   - name: stg_payments
+    description: >
+      Grain : un paiement. Pas de relationships vers les réservations :
+      les orphelins sont un défaut connu (ADR-002, ADR-005), compté en warn.
     columns:
       - name: payment_id
         data_tests: [unique, not_null]
+      - name: booking_id
+        data_tests: [not_null]
+      - name: payment_method
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['card', 'transfer', 'paypal', 'cash']
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'captured', 'refunded', 'failed']
       - name: is_duplicate_submission
         data_tests: [not_null]
