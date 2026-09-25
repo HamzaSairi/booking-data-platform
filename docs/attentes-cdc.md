@@ -1,0 +1,8 @@
+- Délai entre un UPDATE en base et l'arrivée du message dans le topic (jour 22 ; le plan exige moins de 5 s) : Environ 1 s
+- Nombre de messages pour deux UPDATE du même statut dans la même minute, et contenu de before dans le second (jour 23) : 2 messages op='u'. Le before du second contient le statut intermédiaire, celui que le batch n'aurait jamais vu
+- Nombre et nature des messages produits par un DELETE (jour 23) : 2 messages : un op='d' avec le before complet, puis un tombstone, un message à valeur nulle (comportement par défaut de Debezium)
+- Nombre de messages op='r' par table lors de l'instantané initial (jour 22) : Exactement le nombre de lignes en source au moment de l'instantané. Pour bookings, ce sera moins de 2 451, puisque la source a perdu ses lignes supprimées alors que fct_bookings les garde. L'écart mesurera enfin les suppressions invisibles.
+- Croissance du WAL pendant une rafale du simulateur avec Kafka Connect arrêté (jour 22) : Plusieurs dizaines de Mo pour 10 minutes de rafale, sans jamais redescendre tant que le slot n'est pas relu.
+- Nombre d'événements CDC sur les clients pour une rafale de 10 minutes, comparé au nombre de clients distincts que verrait le batch (jour 24) : Au jour 24, environ 1,3 événement par client modifié, comme le 23/09 (241 modifications pour 184 clients existants).
+- Écart entre les lignes actives en source et en cible après intégration dans dbt (jour 25) : 0 écart, si les suppressions sont bien propagées.
+- Ce que le CDC ne résoudra pas : Le passé antérieur à la création du slot, la perte de messages au-delà de la rétention du topic, et les changements de schéma, qui restent à gérer.

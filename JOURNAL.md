@@ -1219,3 +1219,20 @@ rattrapage (jour 19), faille IAM (jour 20).
 - **Ce qui a bien marché** : mesurer avant de décider. Chaque surprise (expiration des partitions, DML interdit, fausse sauvegarde, dimension tardive) a été attrapée par une mesure ou par un test, jamais par hasard. Les scripts qui n'écrivent rien quand un motif manque ont évité tout fichier à moitié modifié.
 - **Ce qui a mal marché** : la rigueur du suivi. Les prédictions du 23/09 n'ont pas été écrites, l'entrée de journal du jour 19 a été perdue sans que je le remarque, et le résultat du test de sécurité du jour 6 n'a jamais été consigné. Plusieurs commandes ont été lancées dans le mauvais environnement ou avec une syntaxe Airflow que je n'avais pas vérifiée.
 - **Ce que je change au sprint 5** : écrire la prédiction dans JOURNAL.md avant chaque mesure, et vérifier git status ainsi que la fin du journal avant chaque commit.
+
+## Jour 21 — CDC : théorie (sprint 5, 24/09)
+
+Relecture de l'ADR-014 et de `docs/limites-batch.md`. Attentes écrites avant
+le code : `docs/attentes-cdc.md` (9 questions, mes prédictions et celles de
+Claude).
+
+Source prête : REPLICA IDENTITY FULL (script d'init, survit aux remises à
+zéro), wal_level logical, 4 slots au plus. Piège confirmé :
+`max_slot_wal_keep_size = -1`, un slot inactif peut remplir le disque sans
+limite. Décision au jour 22, après mesure.
+
+Mémoire : 7,7 Go, 6,7 Go disponibles sans Airflow. Airflow restera arrêté
+aux jours 22 et 23.
+
+Idée clé : le CDC ne voit que l'avenir, comme le snapshot dbt du jour 19.
+Il arrête la perte, il ne répare pas le passé.
