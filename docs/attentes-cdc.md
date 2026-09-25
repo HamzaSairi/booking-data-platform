@@ -1,8 +1,21 @@
-- Délai entre un UPDATE en base et l'arrivée du message dans le topic (jour 22 ; le plan exige moins de 5 s) : Environ 1 s
-- Nombre de messages pour deux UPDATE du même statut dans la même minute, et contenu de before dans le second (jour 23) : 2 messages op='u'. Le before du second contient le statut intermédiaire, celui que le batch n'aurait jamais vu
-- Nombre et nature des messages produits par un DELETE (jour 23) : 2 messages : un op='d' avec le before complet, puis un tombstone, un message à valeur nulle (comportement par défaut de Debezium)
-- Nombre de messages op='r' par table lors de l'instantané initial (jour 22) : Exactement le nombre de lignes en source au moment de l'instantané. Pour bookings, ce sera moins de 2 451, puisque la source a perdu ses lignes supprimées alors que fct_bookings les garde. L'écart mesurera enfin les suppressions invisibles.
-- Croissance du WAL pendant une rafale du simulateur avec Kafka Connect arrêté (jour 22) : Plusieurs dizaines de Mo pour 10 minutes de rafale, sans jamais redescendre tant que le slot n'est pas relu.
-- Nombre d'événements CDC sur les clients pour une rafale de 10 minutes, comparé au nombre de clients distincts que verrait le batch (jour 24) : Au jour 24, environ 1,3 événement par client modifié, comme le 23/09 (241 modifications pour 184 clients existants).
-- Écart entre les lignes actives en source et en cible après intégration dans dbt (jour 25) : 0 écart, si les suppressions sont bien propagées.
-- Ce que le CDC ne résoudra pas : Le passé antérieur à la création du slot, la perte de messages au-delà de la rétention du topic, et les changements de schéma, qui restent à gérer.
+# Attentes vis-à-vis du CDC — écrites avant le code
+
+Point de départ : `docs/limites-batch.md` et ADR-014. Faits nouveaux depuis :
+87 historiques effacés par un rejeu (22/09), au moins 57 modifications de
+clients invisibles au batch (23/09), suppressions physiques absentes de la cible.
+
+Note (25/09) : la première version de ce fichier (commit 561164c) recopiait les
+prédictions de Claude sans les attribuer. Tableau reconstruit avec leur auteur ;
+mes prédictions sur les questions déjà mesurées sont marquées « non notée ».
+
+| # | Question | Jour | Ma prédiction | Prédiction Claude | Mesure |
+|---|---|---|---|---|---|
+| 1 | Délai UPDATE → message dans le topic | 22 | non notée | ~1 s, toujours < 5 s | 405 à 874 ms (commit → Debezium : 60 à 499 ms) |
+| 2 | Deux UPDATE du même statut dans la minute : messages, et `before` du second | 23 | 2 msg op = u | 2 `op='u'` ; `before` = état intermédiaire | |
+| 3 | Messages produits par un DELETE | 23 | 2 msg op = d | 2 : `op='d'` avec `before` complet, puis tombstone | |
+| 4 | Messages `op='r'` par table à l'instantané | 22 | non notée | lignes en source ; bookings < 2 451 | 504 / 50 / 2 448 / 2 067 = source. bookings : 2 448 contre 2 451 en cible (3 suppressions du 23/09) |
+| 5 | WAL retenu, rafale de 10 min, Connect arrêté | 22 | non notée | plusieurs dizaines de Mo | 1,5 Mo ; dossier WAL inchangé à 32 Mo (prédiction fausse d'un facteur 20 à 50) |
+| 6 | Événements CDC par client modifié (rafale) | 24 | non notée | ~1,3 | 1,18 (212 messages pour 179 clients), mesuré dès le jour 22 |
+| 7 | Écart de lignes actives source / cible après dbt | 25 | 0 écart | 0 | |
+| 8 | Ce que le CDC ne résoudra pas | 25 | perte de message | passé antérieur au slot ; perte au-delà de la rétention du topic ; changements de schéma | |
+| 9 | Fixer `max_slot_wal_keep_size` ? | 22 | non notée | oui, ~1 Go | 1 Go (ADR-037) ; marge mesurée 1 039 Mo |
