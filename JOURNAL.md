@@ -1236,3 +1236,24 @@ aux jours 22 et 23.
 
 Idée clé : le CDC ne voit que l'avenir, comme le snapshot dbt du jour 19.
 Il arrête la perte, il ne répare pas le passé.
+
+## Jour 22 — Infrastructure CDC (sprint 5, 25/09)
+
+Redpanda et Kafka Connect sous le profil `cdc`. Connecteur `booking-postgres`
+RUNNING, slot `debezium_booking` actif, 7 topics.
+
+**Preuve du plan** : un UPDATE apparaît dans le topic en 405 à 874 ms
+(exigence : moins de 5 s).
+
+**Mesures** : instantané exact (504 / 50 / 2 448 / 2 067 = source) ; 3
+réservations fantômes dans `fct_bookings` (2 451 contre 2 448), les
+suppressions du 23/09, enfin comptées. Rafale avec Connect arrêté : 1,5 Mo de
+WAL, 1,18 événement par client modifié (212 pour 179). Rafale interrompue par
+un Ctrl+C à une durée inconnue, proche de 10 minutes vu le nombre de clients
+modifiés.
+
+**Incidents (de mon fait)** : consommateur en arrière-plan suspendu (lecture
+du terminal, corrigé par `< /dev/null`) ; document d'attentes commité avec les
+prédictions de Claude sans attribution, reconstruit.
+
+`max_slot_wal_keep_size` fixé à 1 Go (ADR-037).

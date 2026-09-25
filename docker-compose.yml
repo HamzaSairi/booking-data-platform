@@ -37,6 +37,35 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
+  # --- CDC (sprint 5) : démarrer avec --profile cdc -----------------
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    profiles: ["cdc"]
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+
+  kafka-connect:
+    image: quay.io/debezium/connect:3.0
+    profiles: ["cdc"]
+    depends_on: [redpanda, postgres]
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:9092
+      GROUP_ID: booking-connect
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx768m"
+
   postgres:
     image: postgres:16
     container_name: booking-postgres
@@ -51,6 +80,8 @@ services:
       - "wal_level=logical"
       - "-c"
       - "max_replication_slots=4"
+      - "-c"
+      - "max_slot_wal_keep_size=1GB"   # ADR-037 : un slot abandonné ne remplit pas le disque
       - "-c"
       - "max_wal_senders=4"
     ports:

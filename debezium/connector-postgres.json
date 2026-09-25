@@ -1,0 +1,23 @@
+{
+  "name": "booking-postgres",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "booking",
+    "database.password": "${POSTGRES_PASSWORD}",
+    "database.dbname": "booking_db",
+    "topic.prefix": "booking",
+    "table.include.list": "public.customers,public.hotels,public.bookings,public.payments",
+    "slot.name": "debezium_booking",
+    "publication.autocreate.mode": "filtered",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "true",
+    "decimal.handling.mode": "string",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }
+}

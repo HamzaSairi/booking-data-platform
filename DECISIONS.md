@@ -1343,3 +1343,37 @@ postérieur à sa réservation rendrait `relationships` rouge pendant un jour.
 **Résultat** : build du 24/09, `PASS=59 WARN=7 ERROR=0`.
 
 **Date** : 2026-09-24
+
+## ADR-037 — Infrastructure CDC : profil dédié, WAL borné à 1 Go
+
+**Contexte** : Redpanda et Kafka Connect (Debezium 3.0) ajoutés au Compose.
+Un slot de réplication sans lecteur empêche Postgres de purger son WAL ;
+`max_slot_wal_keep_size` valait -1 (aucune limite).
+
+**Mesures (25/09)** : délai commit → topic de 405 à 874 ms. Rafale de
+10 minutes avec Connect arrêté : 1,5 Mo de WAL retenu (et non plusieurs
+dizaines, comme prédit). Au repos, `restart_lsn` reste environ 1,6 Mo en
+arrière de `confirmed_flush_lsn` : c'est une réserve de Postgres, pas un retard
+de lecture. Mémoire : Redpanda 250 Mo (plafond de 1 Go), Connect 532 Mo.
+
+**Décisions** :
+1. `max_slot_wal_keep_size=1GB` dans la commande Compose (et non en
+   `ALTER SYSTEM`, perdu au `down -v`). À 1,5 Mo par rafale, cela laisse plus
+   de 100 heures de simulation continue. Au-delà, le slot passe à `lost` :
+   nouvel instantané, état retrouvé, événements intermédiaires perdus.
+   Arbitrage : un disque jamais saturé contre une exhaustivité bornée.
+2. Services sous le profil `cdc`, mémoire bridée (Redpanda `--memory=1G
+   --smp=1`, tas Java de Connect à 768 Mo).
+3. Redpanda sans volume : un `down` efface les topics et la position du
+   connecteur, ce qui déclenche un nouvel instantané. Acceptable en local.
+4. Configuration du connecteur versionnée sans secret (`${POSTGRES_PASSWORD}`
+   remplacé par `envsubst` à l'enregistrement) ; exception `!debezium/*.json`
+   dans le `.gitignore`. Montants en chaîne (`decimal.handling.mode=string`).
+5. Pas de heartbeat : inutile tant que la base n'écrit pas sur des tables
+   non suivies.
+
+**Dette** : Debezium se connecte avec `booking`, superutilisateur. À remplacer
+par un compte dédié (`REPLICATION` et `SELECT` seulement), au jour 26 avec
+l'ADR-035.
+
+**Date** : 2026-09-25
