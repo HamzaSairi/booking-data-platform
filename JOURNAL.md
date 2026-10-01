@@ -1257,3 +1257,32 @@ du terminal, corrigé par `< /dev/null`) ; document d'attentes commité avec les
 prédictions de Claude sans attribution, reconstruit.
 
 `max_slot_wal_keep_size` fixé à 1 Go (ADR-037).
+
+## Jour 23 — Anatomie d'un événement CDC (sprint 5, 01/10)
+
+**Expérience décisive** : réservation 9 annulée puis rétablie en 20 s, puis
+supprimée. Le CDC a produit 4 messages (2 `u`, 1 `d`, 1 tombstone), dans l'ordre
+des LSN, avec un délai de 76 à 477 ms. Le batch voit une ligne `confirmed`
+inchangée, sauf son `updated_at`. Détails : `docs/batch-vs-cdc.md`.
+
+**Questions 2 et 3** : la question 2 est conforme pour nous deux. Pour la
+question 3, j'avais le bon nombre (2), mais pas la bonne nature : le second
+message est un tombstone, pas un `op='d'`.
+
+**Découvertes** :
+- Aucune réservation `pending` au repos : 325 `cancelled`, 1 291 `completed`,
+  1 128 `confirmed`. Le statut `completed` n'est pas dans le plan.
+- Encodages : `DATE` en jours depuis 1970, `timestamptz` en ISO, `NUMERIC` en
+  chaîne. Le consommateur du jour 24 devra convertir les dates et ignorer
+  les tombstones (ou les traiter).
+
+**Incidents** :
+- Redpanda et Connect arrêtés par un redémarrage de WSL (code 255), alors que
+  Postgres est reparti seul. Le slot n'avait retenu que 12 kB, puisque rien
+  n'avait été écrit entre-temps. À faire : `restart: unless-stopped` sur les
+  services CDC, et un scénario de runbook (« CDC arrêté en silence »).
+- Les commandes de l'expérience ont tourné avec un `ID` vide, faute de
+  `pending` ; rien n'a été modifié. Les commandes s'arrêtent désormais à la
+  première erreur.
+
+**Source** : 2 743 réservations après la suppression de la réservation 9.

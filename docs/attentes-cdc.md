@@ -11,8 +11,8 @@ mes prédictions sur les questions déjà mesurées sont marquées « non notée
 | # | Question | Jour | Ma prédiction | Prédiction Claude | Mesure |
 |---|---|---|---|---|---|
 | 1 | Délai UPDATE → message dans le topic | 22 | non notée | ~1 s, toujours < 5 s | 405 à 874 ms (commit → Debezium : 60 à 499 ms) |
-| 2 | Deux UPDATE du même statut dans la minute : messages, et `before` du second | 23 | 2 msg op = u | 2 `op='u'` ; `before` = état intermédiaire | |
-| 3 | Messages produits par un DELETE | 23 | 2 msg op = d | 2 : `op='d'` avec `before` complet, puis tombstone | |
+| 2 | Deux UPDATE du même statut dans la minute : messages, et `before` du second | 23 | 2 msg op = u | 2 `op='u'` ; `before` = état intermédiaire | 2 `op='u'` (offsets 2847-2848, txId 908 et 909) ; `before` du 2e = `cancelled`, état que le batch ne voit jamais (01/10) |
+| 3 | Messages produits par un DELETE | 23 | 2 msg op = d | 2 : `op='d'` avec `before` complet, puis tombstone | 2 messages : `op='d'` avec `before` complet, puis tombstone (clé seule, valeur nulle). Bon nombre côté Hamza, bonne nature côté Claude (01/10) |
 | 4 | Messages `op='r'` par table à l'instantané | 22 | non notée | lignes en source ; bookings < 2 451 | 504 / 50 / 2 448 / 2 067 = source. bookings : 2 448 contre 2 451 en cible (3 suppressions du 23/09) |
 | 5 | WAL retenu, rafale de 10 min, Connect arrêté | 22 | non notée | plusieurs dizaines de Mo | 1,5 Mo ; dossier WAL inchangé à 32 Mo (prédiction fausse d'un facteur 20 à 50) |
 | 6 | Événements CDC par client modifié (rafale) | 24 | non notée | ~1,3 | 1,18 (212 messages pour 179 clients), mesuré dès le jour 22 |
