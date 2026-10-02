@@ -15,7 +15,7 @@ mes prédictions sur les questions déjà mesurées sont marquées « non notée
 | 3 | Messages produits par un DELETE | 23 | 2 msg op = d | 2 : `op='d'` avec `before` complet, puis tombstone | 2 messages : `op='d'` avec `before` complet, puis tombstone (clé seule, valeur nulle). Bon nombre côté Hamza, bonne nature côté Claude (01/10) |
 | 4 | Messages `op='r'` par table à l'instantané | 22 | non notée | lignes en source ; bookings < 2 451 | 504 / 50 / 2 448 / 2 067 = source. bookings : 2 448 contre 2 451 en cible (3 suppressions du 23/09) |
 | 5 | WAL retenu, rafale de 10 min, Connect arrêté | 22 | non notée | plusieurs dizaines de Mo | 1,5 Mo ; dossier WAL inchangé à 32 Mo (prédiction fausse d'un facteur 20 à 50) |
-| 6 | Événements CDC par client modifié (rafale) | 24 | non notée | ~1,3 | 1,18 (212 messages pour 179 clients), mesuré dès le jour 22 |
+| 6 | Événements CDC par client modifié (rafale) | 24 | non notée | ~1,3 | 1,18 (212 messages pour 179 clients), mesuré dès le jour 22 ; 1,25 au jour 24 (245 `u` pour 196 clients, + 4 `c`, rafale complète, 02/10) |
 | 7 | Écart de lignes actives source / cible après dbt | 25 | 0 écart | 0 | |
-| 8 | Ce que le CDC ne résoudra pas | 25 | perte de message | passé antérieur au slot ; perte au-delà de la rétention du topic ; changements de schéma | |
+| 8 | Ce que le CDC ne résoudra pas | 25 | perte de message | passé antérieur au slot ; perte au-delà de la rétention du topic ; changements de schéma | Pas de perte mesurée : plantage entre chargement et commit = 0 perte, 1 000 doublons (le micro-batch rejoué). La perte n'arrive qu'au-delà de la rétention du topic ou d'un slot `lost` (02/10) |
 | 9 | Fixer `max_slot_wal_keep_size` ? | 22 | non notée | oui, ~1 Go | 1 Go (ADR-037) ; marge mesurée 1 039 Mo |
