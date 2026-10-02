@@ -39,6 +39,7 @@ x-airflow-common: &airflow-common
 services:
   # --- CDC (sprint 5) : démarrer avec --profile cdc -----------------
   redpanda:
+    restart: unless-stopped
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
     profiles: ["cdc"]
     command:
@@ -51,8 +52,11 @@ services:
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
     ports:
       - "19092:19092"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
 
   kafka-connect:
+    restart: unless-stopped
     image: quay.io/debezium/connect:3.0
     profiles: ["cdc"]
     depends_on: [redpanda, postgres]
@@ -177,5 +181,6 @@ services:
         condition: service_completed_successfully
 
 volumes:
+  redpanda-data:
   pgdata:
   airflow-db-data:
