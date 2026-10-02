@@ -1286,3 +1286,25 @@ message est un tombstone, pas un `op='d'`.
   première erreur.
 
 **Source** : 2 743 réservations après la suppression de la réservation 9.
+
+## Jour 24 — Consommateur CDC vers BigQuery (sprint 5, 02/10)
+
+`ingestion/cdc_consumer.py` : micro-batchs de 1 000 messages ou 5 min, load
+jobs, offset commité après écriture, lag loggé. ADR-038.
+
+**Mesures** :
+- Premier passage : instantané complet, 5 593 messages, 0 doublon, 6 lots.
+- Plantage entre chargement et commit : 0 perte, 1 000 doublons (le lot rejoué).
+- Question 6 : 1,25 événement par client modifié (245 pour 196), soit 49 états
+  intermédiaires invisibles au batch.
+- Kafka ne garantit l'ordre que par partition : les 4 topics arrivent mélangés.
+
+**Incidents, et ce qu'ils m'ont appris** :
+- `_partition` est un nom réservé par BigQuery : colonnes renommées en `_kafka_*`.
+- Première reprise sans aucune partition (l'ancien membre n'avait pas expiré,
+  45 s), et un lag qui affichait 0 à tort : un échec silencieux, corrigé.
+- Recréation de Redpanda avec un volume, nouvel instantané et nouveau slot.
+
+**À faire avant le jour 25** : aucun DELETE en 10 min de rafale. Le simulateur
+ne supprime que les vieilles `pending`, et il n'en existe plus. Le défaut
+« suppression physique » est inopérant : à réparer avant la réconciliation.

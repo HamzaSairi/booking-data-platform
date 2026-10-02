@@ -88,9 +88,20 @@ def vers_ligne(msg, valeur: dict) -> dict:
 
 
 def lag_total(consumer: Consumer) -> int:
-    """Messages produits mais pas encore commités, toutes partitions assignées."""
+    """Messages produits mais pas encore commités.
+
+    Calculé sur toutes les partitions des topics suivis, assignées ou non.
+    """
     total = 0
-    for tp in consumer.committed(consumer.assignment(), timeout=10):
+    # Pas consumer.assignment() : sans partition assignée (rebalance en cours),
+    # la somme serait vide et le lag afficherait 0 à tort (vécu le 02/10).
+    md = consumer.list_topics(timeout=10)
+    parts = [
+        TopicPartition(TOPIC_PREFIX + t, p)
+        for t in TABLES
+        for p in md.topics[TOPIC_PREFIX + t].partitions
+    ]
+    for tp in consumer.committed(parts, timeout=10):
         bas, haut = consumer.get_watermark_offsets(tp, timeout=10, cached=False)
         total += haut - (tp.offset if tp.offset >= 0 else bas)
     return total
@@ -159,7 +170,12 @@ def main() -> None:
             "auto.offset.reset": "earliest",
         }
     )
-    consumer.subscribe([TOPIC_PREFIX + t for t in TABLES])
+    consumer.subscribe(
+        [TOPIC_PREFIX + t for t in TABLES],
+        on_assign=lambda _c, parts: log(
+            "assignation", partitions=[f"{p.topic}[{p.partition}]" for p in parts]
+        ),
+    )
     log(
         "demarrage",
         bootstrap=BOOTSTRAP,
@@ -178,6 +194,8 @@ def main() -> None:
         while True:
             msg = consumer.poll(1.0)
             maintenant = time.monotonic()
+            if not consumer.assignment():
+                dernier_message = maintenant  # sans partition, on attend : pas inactif
             if msg is None:
                 if args.exit_when_idle and maintenant - dernier_message >= args.exit_when_idle:
                     log("inactif", secondes=args.exit_when_idle)

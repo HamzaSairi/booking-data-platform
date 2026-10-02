@@ -1377,3 +1377,50 @@ par un compte dédié (`REPLICATION` et `SELECT` seulement), au jour 26 avec
 l'ADR-035.
 
 **Date** : 2026-09-25
+
+## ADR-038 — Consommateur CDC : at-least-once, message brut, dédoublonnage en aval
+
+**Contexte** : `ingestion/cdc_consumer.py` lit les 4 topics Debezium et écrit
+dans `raw_booking.{table}_cdc` par micro-batchs (1 000 messages ou 5 min).
+Il faut choisir quand commiter l'offset par rapport à l'écriture.
+
+**Options** :
+(a) commit avant écriture (at-most-once) : un plantage perd le micro-batch ;
+(b) commit après écriture (at-least-once) : un plantage le rejoue, d'où des doublons ;
+(c) exactly-once : transactions Kafka et écriture idempotente côté BigQuery
+    (Storage Write API avec offsets). Beaucoup de complexité pour un gain que
+    la déduplication en aval apporte déjà.
+
+**Décision** : (b). Chaque ligne porte `_kafka_topic`, `_kafka_partition` et
+`_kafka_offset`, qui identifient un message de façon unique. La déduplication se
+fait dans dbt, sur ce triplet ou sur `lsn` par clé. C'est le compromis standard :
+la perte est irréparable, le doublon se corrige.
+
+**Mesure (02/10)** : plantage simulé (`--crash-after-load`) après le chargement
+d'un micro-batch de 1 000 messages, avant le commit. À la reprise : 0 perte
+(offsets continus de 0 au dernier, sur les 4 tables), 1 000 doublons, soit exactement
+le micro-batch rejoué (221 clients, 526 réservations, 253 paiements).
+
+**Autres choix** :
+1. La raw garde le message brut : `before` et `after` au type `JSON`. Le
+   consommateur est générique (un code, 4 tables) et un ajout de colonne en
+   source ne le casse pas. Contrepartie : typage et conversion des `DATE`
+   (jours depuis 1970) reportés dans dbt.
+2. Load jobs (gratuits) plutôt que streaming : 3,5 à 5 s par chargement,
+   négligeable pour un micro-batch de 5 min.
+3. Tombstones ignorés mais comptés : la suppression est portée par le `op='d'`.
+4. Partitionnement sur `_ingested_at` (identifiant de lot), clustering sur `_key`.
+5. Revient sur la décision 3 de l'ADR-037 : Redpanda a désormais un volume, et
+   les services CDC ont `restart: unless-stopped`. Une recréation n'efface plus
+   les topics (vérifié par `--force-recreate`).
+
+**Leçons du test** :
+- Un consommateur tué ne quitte pas son groupe : ses partitions restent
+  bloquées jusqu'à `session.timeout.ms` (45 s). La première reprise n'a reçu
+  aucune partition et s'est arrêtée « inactive » sans rien lire.
+- Le lag était calculé sur les partitions *assignées*. Sans assignation, il
+  affichait 0 alors que 1 028 messages attendaient : un échec silencieux.
+  Corrigé (lag sur toutes les partitions des topics suivis, assignation loggée,
+  délai d'inactivité suspendu sans partition).
+
+**Date** : 2026-10-02
