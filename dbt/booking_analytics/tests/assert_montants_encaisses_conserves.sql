@@ -4,7 +4,7 @@
 with p as (select * from {{ ref('stg_payments') }} where status = 'captured'),
 orphelins as (
     select coalesce(sum(p.amount), 0) as m
-    from p left join {{ ref('stg_bookings') }} b using (booking_id)
+    from p left join {{ ref('int_bookings_actives') }} b using (booking_id)
     where b.booking_id is null and not p.is_duplicate_submission
 ),
 bilan as (

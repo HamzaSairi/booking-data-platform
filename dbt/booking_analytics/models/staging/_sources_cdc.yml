@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: raw_booking_cdc
+    schema: "{{ env_var('BQ_DATASET_RAW') }}"
+    description: >
+      Événements Debezium, un par changement, écrits par ingestion/cdc_consumer.py
+      (ADR-038). At-least-once : doublons possibles, à dédoublonner. before et
+      after au type JSON ; DATE en jours depuis 1970, NUMERIC en chaîne.
+    config:
+      loaded_at_field: "_ingested_at"   # le CDC n'a pas de _interval_start
+      freshness:
+        warn_after: {count: 1, period: hour}
+        error_after: {count: 26, period: hour}
+    tables:
+      - name: bookings_cdc
+      - name: customers_cdc
+      - name: hotels_cdc
+      - name: payments_cdc

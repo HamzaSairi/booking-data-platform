@@ -342,28 +342,32 @@ def mutate_customers(cur, n: int) -> int:
     return len(rows)
 
 
-def delete_old_pending(cur, pct: float = 0.01) -> int:
-    """Suppression PHYSIQUE de vieilles reservations pending.
+def delete_old_bookings(cur, prob: float = 0.3) -> int:
+    """Suppression PHYSIQUE d'une vieille reservation pending ou cancelled.
 
     Aucun updated_at ne bouge, aucune trace ne subsiste : l'extraction
     incrementale du Jour 7 ne peut structurellement pas la detecter.
-    C'est le defaut qui justifiera le CDC au sprint 5.
-    """
-    rows = cur.execute(
-        "SELECT booking_id FROM bookings "
-        "WHERE status = 'pending' AND created_at < now() - interval '20 days'"
-    ).fetchall()
-    if not rows:
-        return 0
+    C'est le defaut qui justifie le CDC au sprint 5.
 
-    # Tirage de Bernoulli par ligne plutot qu'un arrondi sur l'effectif :
-    # sur de petits volumes, round(30 * 0.01) = 0 et un max(1, ...) transforme
-    # une probabilite de 1 % en certitude. Ici le taux est respecte en moyenne.
-    victims = [bid for (bid,) in rows if random.random() < pct]
-    for bid in victims:
-        cur.execute("DELETE FROM bookings WHERE booking_id = %s", (bid,))
-        log_event("hard_delete", booking_id=bid)
-    return len(victims)
+    Jour 25 : la version initiale ne visait que les pending de plus de
+    20 jours, or advance_statuses les fait progresser bien avant. Vivier
+    vide, defaut inoperant (0 DELETE en 10 min le 02/10). Elargi aux
+    cancelled anciennes (purge realiste), et au plus une victime par tour
+    avec une probabilite fixe, independante de la taille du vivier.
+    """
+    if random.random() >= prob:
+        return 0
+    row = cur.execute(
+        "SELECT booking_id FROM bookings "
+        "WHERE status IN ('pending', 'cancelled') "
+        "AND created_at < now() - interval '20 days' "
+        "ORDER BY random() LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return 0
+    cur.execute("DELETE FROM bookings WHERE booking_id = %s", (row[0],))
+    log_event("hard_delete", booking_id=row[0])
+    return 1
 
 
 def inject_defects(cur, rate: float) -> Counter:
@@ -597,7 +601,7 @@ def simulate(minutes, defect_rate, interval, rng_seed) -> None:
                 # plus vite qu'on ne le reconstitue, et il s'epuise.
                 n_status = advance_statuses(cur, random.randint(1, 4))
                 n_cust = mutate_customers(cur, random.randint(2, 6))
-                n_del = delete_old_pending(cur)
+                n_del = delete_old_bookings(cur)
                 defects = inject_defects(cur, defect_rate)
 
             click.echo(

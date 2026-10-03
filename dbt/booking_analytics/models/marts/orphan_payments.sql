@@ -3,5 +3,5 @@
 -- Hors du grain de fct_bookings : exposé ici, jamais masqué (ADR-036).
 select p.*
 from {{ ref('stg_payments') }} p
-left join {{ ref('stg_bookings') }} b using (booking_id)
+left join {{ ref('int_bookings_actives') }} b using (booking_id)
 where b.booking_id is null

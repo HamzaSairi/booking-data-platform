@@ -1424,3 +1424,44 @@ le micro-batch rejoué (221 clients, 526 réservations, 253 paiements).
   délai d'inactivité suspendu sans partition).
 
 **Date** : 2026-10-02
+
+## ADR-039 — fct_bookings alimenté par le CDC, architecture hybride assumée
+
+**Contexte** : le CDC (ADR-037, ADR-038) alimente `raw_booking.*_cdc`. La couche
+batch, arrêtée depuis le 23/09, contenait des réservations fantômes.
+
+**Décision** :
+1. `stg_bookings_cdc` : dernier événement par réservation (`lsn`, puis offset),
+   mêmes colonnes et mêmes règles que `stg_bookings`, plus `is_deleted`.
+2. `int_bookings_actives` : définition **unique** de « ce qui existe ».
+   `fct_bookings`, `orphan_payments` et les tests de montants la lisent tous.
+   Avec deux définitions, des paiements étaient comptés deux fois (une fois dans
+   le fait, une fois orphelins).
+3. Option écartée : garder le batch et retirer les clés supprimées d'après le
+   CDC. Elle ne voit que les suppressions postérieures à l'instantané.
+4. Seules les réservations passent par le CDC. Clients, paiements et hôtels
+   restent en batch.
+
+**Conséquence mesurée** : des faits frais joints à des dimensions périmées
+cassent l'intégrité référentielle. 9 réservations référençaient des clients
+(505 à 511) absents d'une dimension figée au 23/09. Corrigé par un rattrapage
+batch (20/09 → 03/10) et un `dbt snapshot`. La dérive reviendra dès que les deux
+chaînes ne tournent plus au même rythme.
+
+**Pièges rencontrés** :
+- Dans une colonne `JSON`, un `"after": null` est stocké comme un null **JSON**,
+  que `coalesce` ne saute pas. `coalesce(after, before)` regroupait toutes les
+  suppressions sous une clé nulle (12 perdues sur 13). Remplacé par
+  `if(op = 'd', before, after)`, qui suit la sémantique de Debezium.
+- Le défaut « suppression physique » du simulateur était inopérant (vivier de
+  `pending` toujours vide). Il vise désormais les `pending` et `cancelled` de plus
+  de 20 jours, avec une victime au plus par tour (p = 0,3).
+
+**Résultat** : 0 écart sur 3 205 identifiants entre Postgres et `fct_bookings`.
+Le batch en compte 3 222 : 17 fantômes, tous expliqués (3 + 1 + 13).
+
+**Cible, hors du périmètre du sprint** : clients et paiements par le CDC, et le
+SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
+`dbt snapshot`, qui ne voit qu'une version par exécution. → `docs/limites.md`.
+
+**Date** : 2026-10-03

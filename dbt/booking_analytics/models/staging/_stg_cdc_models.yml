@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_bookings_cdc
+    description: >
+      Dernier état connu de chaque réservation d'après le CDC, suppressions
+      comprises (is_deleted). Remplace stg_bookings comme source de fct_bookings.
+    columns:
+      - name: booking_id
+        data_tests: [unique, not_null]
+      - name: is_deleted
+        data_tests: [not_null]
+      - name: last_op
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['r', 'c', 'u', 'd']

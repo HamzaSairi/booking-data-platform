@@ -85,3 +85,23 @@ L'offset 0 du topic : `op='r'`, `before` nul, `source.snapshot =
 first_in_data_collection`. L'instantané initial du 25/09 a produit exactement
 une ligne `r` par ligne en source (504 / 50 / 2 448 / 2 067). Le CDC capture
 l'état **présent** au démarrage, pas l'historique antérieur au slot.
+
+## 5. Bilan chiffré (jour 25, 03/10)
+
+| Critère | Batch (extraction incrémentale) | CDC (Debezium → Redpanda → BigQuery) |
+|---|---|---|
+| Délai de capture | fenêtre quotidienne | 76 à 874 ms jusqu'au topic, puis micro-batch ≤ 5 min |
+| États intermédiaires | une version par exécution | 1,18 à 1,25 événement par client modifié : 49 états perdus par le batch en 10 min (jour 24) |
+| Annulation puis rétablissement | invisible (ligne inchangée sauf `updated_at`) | 2 événements, état intermédiaire dans `before` (jour 23) |
+| Suppressions physiques | **17 fantômes** en cible (3 222 contre 3 205) | 0 fantôme : 13 suppressions capturées, 4 antérieures à l'instantané donc absentes |
+| Réconciliation source / cible | échoue (+17) | **0 écart** sur 3 205 identifiants (`tests/test_reconciliation_cdc.py`) |
+| Garantie | rejouable par fenêtre (écrasement de partition) | at-least-once : 0 perte, 1 000 doublons après plantage, dédoublonnés dans dbt |
+| Coût BigQuery | load jobs gratuits | load jobs gratuits (3,5 à 5 s chacun) |
+| Coût d'exploitation | un DAG, un watermark | 2 conteneurs (~800 Mo), un slot de réplication à surveiller, un lag, des rebalances |
+
+**Ce que le CDC ne résout pas, constaté ici** :
+- le passé antérieur au slot : l'instantané donne l'état présent, pas l'historique ;
+- la fraîcheur des tables qu'il ne couvre pas : `fct_bookings` frais joint à des
+  dimensions batch périmées a cassé l'intégrité référentielle (9 réservations sans
+  client avant rattrapage) ;
+- l'ordre entre tables : Kafka n'ordonne qu'au sein d'une partition.

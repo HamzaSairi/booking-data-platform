@@ -7,7 +7,9 @@
 -- doubles soumissions), nights.
 -- Anomalies exposées, jamais filtrées : montant à zéro, surencaissement.
 -- Hors grain : paiements orphelins, sans réservation (jour 20).
-with b as (select * from {{ ref('stg_bookings') }}),
+-- Source CDC depuis le jour 25 : réservations supprimées en source exclues,
+-- fantômes du batch absents (l'instantané ne contient que l'existant).
+with b as (select * from {{ ref('int_bookings_actives') }}),
      p as (select * from {{ ref('int_payments_by_booking') }}),
      c as (select customer_sk, customer_id, customer_since, valid_from, valid_to from {{ ref('dim_customers') }})
 select

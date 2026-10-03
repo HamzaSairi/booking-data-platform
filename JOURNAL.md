@@ -1308,3 +1308,39 @@ jobs, offset commité après écriture, lag loggé. ADR-038.
 **À faire avant le jour 25** : aucun DELETE en 10 min de rafale. Le simulateur
 ne supprime que les vieilles `pending`, et il n'en existe plus. Le défaut
 « suppression physique » est inopérant : à réparer avant la réconciliation.
+
+## Jour 25 — Intégration dbt du CDC (sprint 5, 03/10)
+
+`stg_bookings_cdc`, `int_bookings_actives` et `fct_bookings` alimentés par le CDC.
+Test de réconciliation pytest entre Postgres et BigQuery. ADR-039.
+
+**Question 7** : 0 écart sur 3 205 identifiants, comme prédit par Hamza et par
+Claude. Le batch rattrapé compte 3 222 réservations : 17 fantômes (3 + 1 + 13).
+
+**Incidents** :
+- Défaut de suppression du simulateur inopérant, réparé (13 suppressions sur 30 tours).
+- Null JSON contre NULL SQL : 12 suppressions sur 13 perdues dans le staging, corrigé.
+- 9 réservations sans client : dimensions batch figées au 23/09. Rattrapage de
+  14 jours, après un échec `ModuleNotFoundError` (scripts à lancer avec
+  `python -m ingestion.load`).
+- Erreurs `ruff` B905 préexistantes dans `simulator/generate.py` (lignes 127,
+  158, 217) : à corriger à part.
+
+## Rétrospective du sprint 5
+
+**Ce qui a marché** : écrire les prédictions avant de mesurer
+(`docs/attentes-cdc.md`). Neuf questions, toutes confrontées à une mesure, et deux
+désaccords tranchés par les faits (tombstone, nombre de fantômes).
+
+**Ce qui a coûté** :
+- Des blocs de commandes sans arrêt à la première erreur (jour 23).
+- Un pager `less` qui a avalé une commande collée (fichier parasite).
+- Deux échecs silencieux : un lag à 0 sans partition assignée, et des
+  suppressions regroupées sous une clé nulle avec un test `unique` vert.
+
+**À garder** : garde-fous `[ ! -f ]` et `ARRÊT`, `git --no-pager`, vérifier une
+hypothèse par une requête avant de corriger.
+
+**À changer au sprint 6** : un seul environnement d'exécution documenté par outil
+(`.venv`, `.venv-dbt`), et des scripts lancés en `python -m`, pour que la CI
+(jour 27) ne bute pas sur les mêmes pièges.
