@@ -1471,31 +1471,32 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 **Options** : (a) détruire et laisser Terraform recréer, (b) importer avec des blocs `import`.
 **Décision** : import.
 **Raison** : les tables raw et `_cdc` contiennent des suppressions et des états intermédiaires qui n'existent plus en source : elles ne sont pas reconstructibles. Le premier `plan` a aussi révélé du drift (labels absents, `display_name` réel « Booking pipeline » différent de celui que j'avais écrit) : j'ai aligné le code sur la réalité plutôt que l'inverse.
-**Incident** : l'import du SA a d'abord échoué (« Cannot import non-existent remote object ») alors que le SA existait. Cause retenue : [à compléter — format d'ID, API IAM non activée, faute de frappe ?].
-**Date** : [à compléter]
+**Incident** : l'import du SA a d'abord échoué (« Cannot import non-existent remote object ») alors que le SA existait. Cause retenue : non isolée — API IAM activée et ID d'import passé au format email dans le même essai ; l'une des deux corrections a débloqué l'import, sans que je puisse dire laquelle. Leçon : une seule modification à la fois en débogage..
+**Date** : 2026-10-04
 
 ## ADR-010 — State Terraform local
 **Contexte** : Terraform doit mémoriser ce qu'il gère.
 **Options** : (a) state local gitignoré, (b) bucket GCS versionné avec verrouillage, (c) HCP Terraform.
 **Décision** : state local.
 **Raison** : projet solo, un seul poste. Coût : impossible de lancer `terraform plan` en CI (voir ADR-013), et aucune protection contre deux `apply` concurrents. En équipe, (b) serait obligatoire — mais GCS exige la facturation (voir ADR-012).
-**Date** : [à compléter]
+**Date** : 2026-10-04
 
 ## ADR-011 — IAM additif, au niveau dataset, et clé SA hors Terraform
 **Contexte** : accorder au SA les droits strictement nécessaires.
 **Options** : `iam_policy` / `iam_binding` (autoritaires) vs `iam_member` (additif) ; droits au niveau projet vs dataset ; clé générée par Terraform ou non.
 **Décision** : `google_bigquery_dataset_iam_member` (dataEditor par dataset) + `google_project_iam_member` (jobUser, qui n'existe qu'au niveau projet). Pas de `google_service_account_key`. Pas de bloc `access {}` dans les datasets.
 **Raison** : les ressources autoritaires écrasent tout ce qui n'est pas dans le code, y compris mes propres droits. Une clé générée par Terraform finirait en clair dans le state. Le bloc `access {}` entrerait en conflit avec les `iam_member`.
-**Date** : [à compléter]
+**Date** : 2026-10-04
 
 ## ADR-012 — Rester en BigQuery sandbox
 **Contexte** : le premier `apply` a échoué sur `billingNotEnabled`. Le projet tournait en sandbox depuis le jour 6 sans que je le sache : chaque table expire 60 jours après sa création. L'alerte budget du jour 6 ne pouvait d'ailleurs pas fonctionner sans compte de facturation.
 **Options** : (a) activer la facturation (le free tier reste gratuit), (b) aligner le code sur la contrainte du sandbox.
 **Décision** : (b), avec l'expiration exposée dans une variable `bq_sandbox_expiration_ms`.
-**Raison** : [à compléter — ta vraie raison : zéro risque de facture ? pas de carte bancaire ?]
+**Raison** : choix rapide, guidé par la volonté de ne pas activer la facturation : l'option B ne demandait aucun moyen de paiement et débloquait l'apply immédiatement. Je n'ai pas pesé l'impact de l'expiration au moment de la décision ; je l'ai mesuré ensuite (voir Coût). Acceptable pour un projet qui se termine au jour 30, à condition d'enregistrer les démos avant expiration.
+**En production** : facturation activée, budget avec alertes, aucune expiration par défaut sur les données sources.
 **Coût** : les données expirent ; l'historique CDC et les snapshots SCD2 ne sont pas reconstructibles. Démos à enregistrer avant expiration. GCS indisponible (pas de backend distant). Certaines opérations DML peuvent être limitées.
 **Réversibilité** : lier un compte de facturation, passer la variable à `null`, retirer l'expiration des tables existantes (`bq update --expiration 0`).
-**Date** : [à compléter]
+**Date** : 2026-10-04
 
 ## ADR-013 — Pas de `terraform plan` en CI
 **Contexte** : le plan du jour 27 prévoyait `terraform plan` dans GitHub Actions.

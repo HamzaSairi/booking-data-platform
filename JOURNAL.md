@@ -1351,9 +1351,10 @@ hypothèse par une requête avant de corriger.
 
 **Ce qui a coincé**
 - `terraform` absent : installé via le dépôt apt HashiCorp (snap fonctionne mal sous WSL).
-- Import du SA refusé alors qu'il existait. Résolu après passage de l'ID au format email et alignement du `display_name`. Cause exacte : [à compléter].
+- Import du SA refusé alors qu'il existait. Résolu après passage de l'ID au format email et alignement du `display_name`. Cause exacte : non isolée — API IAM activée et ID passé au format email dans le même essai.
 - Premier `apply` partiel : `job_user` créé, mise à jour des 3 datasets refusée (`billingNotEnabled`). **Découverte : le projet est en sandbox depuis le jour 6**, avec expiration des tables à 60 jours. Je ne l'avais jamais vu. → ADR-012.
 - `dbt: command not found` : venv non activé dans le nouveau terminal. Réinstallation de dbt-core 1.12.5 / dbt-bigquery 1.12.1 ; pip a rétrogradé protobuf 7.36.1 → 6.33.6 (vérifié avec `pip check`).
+- **Écart à la règle « commiter tous les jours »** : aucun commit le jour 26. Le code Terraform est entré dans Git au jour 27 via un git add . qui a aussi embarqué terraform.tfvars. Leçon : commit en fin de séance, git status relu avant tout git add.
 
 **Ce que je retiens** : Terraform a rendu explicite une contrainte implicite du fournisseur cloud qui était restée invisible pendant 20 jours. C'est l'argument le plus concret que j'aie pour l'IaC.
 
