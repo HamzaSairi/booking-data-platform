@@ -1344,3 +1344,41 @@ hypothèse par une requête avant de corriger.
 **À changer au sprint 6** : un seul environnement d'exécution documenté par outil
 (`.venv`, `.venv-dbt`), et des scripts lancés en `python -m`, pour que la CI
 (jour 27) ne bute pas sur les mêmes pièges.
+
+## Jour 26 — Terraform
+
+**Fait** : datasets, SA et rôles IAM décrits en Terraform ; import de l'existant ; `terraform plan` → « No changes ». dbt staging toujours fonctionnel (6 vues OK).
+
+**Ce qui a coincé**
+- `terraform` absent : installé via le dépôt apt HashiCorp (snap fonctionne mal sous WSL).
+- Import du SA refusé alors qu'il existait. Résolu après passage de l'ID au format email et alignement du `display_name`. Cause exacte : [à compléter].
+- Premier `apply` partiel : `job_user` créé, mise à jour des 3 datasets refusée (`billingNotEnabled`). **Découverte : le projet est en sandbox depuis le jour 6**, avec expiration des tables à 60 jours. Je ne l'avais jamais vu. → ADR-012.
+- `dbt: command not found` : venv non activé dans le nouveau terminal. Réinstallation de dbt-core 1.12.5 / dbt-bigquery 1.12.1 ; pip a rétrogradé protobuf 7.36.1 → 6.33.6 (vérifié avec `pip check`).
+
+**Ce que je retiens** : Terraform a rendu explicite une contrainte implicite du fournisseur cloud qui était restée invisible pendant 20 jours. C'est l'argument le plus concret que j'aie pour l'IaC.
+
+**À faire** : enregistrer les démos SCD2/CDC avant expiration des tables ; tester si `bq update --expiration` prolonge une table en sandbox.
+
+## Jour 27 — CI/CD
+
+**Fait** : workflow GitHub Actions en 4 jobs (`lint` → `tests`, `dbt`, `terraform`), vert en 1 min 21 s. Secrets/variables GitHub. pre-commit (ruff, terraform fmt, actionlint, detect-private-key). Échec volontaire démontré : pre-commit bloque en local ; avec `--no-verify`, la PR #1 est bloquée par le CI (lint rouge en 12 s, autres jobs ignorés).
+
+**Problèmes révélés par le CI** — aucun n'était visible en local :
+1. **Marqueur oublié** : `test_idempotence.py` portait `pytest.mark.bigquery` depuis le jour 9 ; je filtrais sur `integration`. Gardé `bigquery`, plus précis.
+2. **`pythonpath` perdu** dans `pyproject.toml` en modifiant les `markers` → `ingestion` et `commun` introuvables. `commun` vit dans `airflow/dags/` : Airflow l'ajoute au chemin, pytest non.
+3. **Lint** : 3 `zip()` sans `strict=True` (un `RETURNING` incomplet aurait décalé les clés étrangères en silence), variables `l` ambiguës. Mes éditions manuelles successives ont fini par dupliquer un bloc → restauration par `git checkout --` puis renommage par `sed`. Leçon : pour une correction mécanique, une commande est plus fiable qu'un éditeur.
+4. **`ci.yml` jamais créé** : `git ls-files .github/` vide. GitHub affichait « Get started ».
+5. **Workflow rejeté instantanément** : contexte `runner` interdit dans le `env` d'un job. Le YAML était valide (`yaml.safe_load` OK) mais pas le schéma GitHub → ajout d'actionlint dans pre-commit.
+6. **Compose interprète tout le fichier** : `up -d postgres` échouait sur les variables obligatoires d'Airflow (`FERNET_KEY`, `POSTGRES_PASSWORD`, `GCP_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`). Mes propres garde-fous `${VAR:?...}` ont fait leur travail ; le CI les reçoit maintenant via `env`.
+7. **dbt** : `env_var('BQ_DATASET_STAGING')` non fourni (exit 2) → 5 variables `BQ_*` passées au job.
+8. **`terraform fmt`** : exit 3 sur `main.tf` non formaté.
+9. **`ubuntu-latest`** allait passer à Ubuntu 26 dans deux semaines → figé sur 24.04 (ADR-016).
+10. **`terraform.tfvars` était commité** (repéré par pre-commit, qui ne traite que les fichiers suivis). Retiré avec `git rm --cached`. Ne contient que l'ID projet, mais le `.gitignore` ne couvrait pas les `tfvars`.
+
+**Erreur de méthode** : premier test d'échec raté — branche supprimée juste après le push, avant d'ouvrir la PR. Le workflow ne se déclenche que sur push vers `main` et sur PR : aucun run n'avait eu lieu.
+
+**Dette ouverte** (tests BigQuery, hors CI, rouges) :
+- `test_le_rejeu_ne_modifie_pas_la_couche_staging` : `extract.py` sort en code 2 → hypothèse : il attend des arguments de date depuis le passage aux data intervals (jour 13), le test l'appelle sans. Test obsolète depuis 14 jours.
+- `test_la_vue_ne_contient_aucune_cle_dupliquee` : `staging_booking.v_hotels` introuvable → vues du jour 9 remplacées par les `stg_*` de dbt ? À vérifier avec `bq ls`.
+
+**Ce que je retiens** : le CI a révélé en une session une dizaine de problèmes que 26 jours de travail local n'avaient pas fait apparaître, dont un test mort depuis deux semaines. Tout ce qui dépendait de « ce qui est activé dans mon terminal » est tombé.

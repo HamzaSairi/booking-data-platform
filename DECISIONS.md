@@ -1465,3 +1465,62 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 `dbt snapshot`, qui ne voit qu'une version par exécution. → `docs/limites.md`.
 
 **Date** : 2026-10-03
+
+## ADR-009 — Importer l'infrastructure existante plutôt que la recréer
+**Contexte** : les datasets et le service account ont été créés à la main au jour 6. Terraform arrive au jour 26.
+**Options** : (a) détruire et laisser Terraform recréer, (b) importer avec des blocs `import`.
+**Décision** : import.
+**Raison** : les tables raw et `_cdc` contiennent des suppressions et des états intermédiaires qui n'existent plus en source : elles ne sont pas reconstructibles. Le premier `plan` a aussi révélé du drift (labels absents, `display_name` réel « Booking pipeline » différent de celui que j'avais écrit) : j'ai aligné le code sur la réalité plutôt que l'inverse.
+**Incident** : l'import du SA a d'abord échoué (« Cannot import non-existent remote object ») alors que le SA existait. Cause retenue : [à compléter — format d'ID, API IAM non activée, faute de frappe ?].
+**Date** : [à compléter]
+
+## ADR-010 — State Terraform local
+**Contexte** : Terraform doit mémoriser ce qu'il gère.
+**Options** : (a) state local gitignoré, (b) bucket GCS versionné avec verrouillage, (c) HCP Terraform.
+**Décision** : state local.
+**Raison** : projet solo, un seul poste. Coût : impossible de lancer `terraform plan` en CI (voir ADR-013), et aucune protection contre deux `apply` concurrents. En équipe, (b) serait obligatoire — mais GCS exige la facturation (voir ADR-012).
+**Date** : [à compléter]
+
+## ADR-011 — IAM additif, au niveau dataset, et clé SA hors Terraform
+**Contexte** : accorder au SA les droits strictement nécessaires.
+**Options** : `iam_policy` / `iam_binding` (autoritaires) vs `iam_member` (additif) ; droits au niveau projet vs dataset ; clé générée par Terraform ou non.
+**Décision** : `google_bigquery_dataset_iam_member` (dataEditor par dataset) + `google_project_iam_member` (jobUser, qui n'existe qu'au niveau projet). Pas de `google_service_account_key`. Pas de bloc `access {}` dans les datasets.
+**Raison** : les ressources autoritaires écrasent tout ce qui n'est pas dans le code, y compris mes propres droits. Une clé générée par Terraform finirait en clair dans le state. Le bloc `access {}` entrerait en conflit avec les `iam_member`.
+**Date** : [à compléter]
+
+## ADR-012 — Rester en BigQuery sandbox
+**Contexte** : le premier `apply` a échoué sur `billingNotEnabled`. Le projet tournait en sandbox depuis le jour 6 sans que je le sache : chaque table expire 60 jours après sa création. L'alerte budget du jour 6 ne pouvait d'ailleurs pas fonctionner sans compte de facturation.
+**Options** : (a) activer la facturation (le free tier reste gratuit), (b) aligner le code sur la contrainte du sandbox.
+**Décision** : (b), avec l'expiration exposée dans une variable `bq_sandbox_expiration_ms`.
+**Raison** : [à compléter — ta vraie raison : zéro risque de facture ? pas de carte bancaire ?]
+**Coût** : les données expirent ; l'historique CDC et les snapshots SCD2 ne sont pas reconstructibles. Démos à enregistrer avant expiration. GCS indisponible (pas de backend distant). Certaines opérations DML peuvent être limitées.
+**Réversibilité** : lier un compte de facturation, passer la variable à `null`, retirer l'expiration des tables existantes (`bq update --expiration 0`).
+**Date** : [à compléter]
+
+## ADR-013 — Pas de `terraform plan` en CI
+**Contexte** : le plan du jour 27 prévoyait `terraform plan` dans GitHub Actions.
+**Options** : (a) plan en CI avec backend distant, (b) `fmt -check` + `validate` uniquement.
+**Décision** : (b).
+**Raison** : trois blocages cumulés — state local (le runner verrait un state vide et proposerait de tout recréer), GCS indisponible en sandbox, et SA sans droits de lecture IAM (moindre privilège voulu). `validate` attrape les erreurs de syntaxe et de référence sans identifiants.
+**En production** : backend GCS, identité CI dédiée en lecture, plan commenté automatiquement sur chaque PR.
+**Date** : 2026-10-05
+
+## ADR-014 — Clé de service account en secret GitHub
+**Contexte** : le job dbt doit s'authentifier auprès de BigQuery.
+**Options** : (a) clé JSON encodée en base64 dans un secret, (b) Workload Identity Federation.
+**Décision** : (a).
+**Raison** : simplicité de mise en place pour un projet personnel. Limite assumée : une clé longue durée reste valide jusqu'à révocation si elle fuit. WIF supprime toute clé : GitHub obtient un jeton temporaire (~1 h) échangé auprès de Google. C'est la cible pour la production.
+**Date** : 2026-10-05
+
+## ADR-015 — Tests BigQuery exclus du CI
+**Contexte** : `test_idempotence.py` et `test_reconciliation_cdc.py` exécutent le vrai pipeline contre BigQuery.
+**Options** : (a) les lancer en CI, (b) les exclure via le marqueur `bigquery` (`pytest -m "not bigquery"`).
+**Décision** : (b). Le CI lance les tests unitaires et les tests sur un Postgres démarré dans le runner via `docker compose up -d postgres`.
+**Raison** : coût, quotas du sandbox, durée, et déterminisme (un test qui dépend d'un service distant peut échouer pour une raison étrangère au code). Contrepartie : ces tests doivent être lancés à la main avant chaque démo — et ils sont actuellement rouges (voir JOURNAL, jour 27).
+**Date** : 2026-10-05
+
+## ADR-016 — Figer l'environnement du CI
+**Contexte** : GitHub a annoncé la migration de `ubuntu-latest` vers Ubuntu 26 le 19 octobre 2026.
+**Décision** : `runs-on: ubuntu-24.04` (identique à mon WSL), Python 3.12 explicite, dépendances figées dans `requirements.txt`.
+**Raison** : sans cela, le CI aurait changé de système dans deux semaines sans aucun commit de ma part. Un CI non reproductible ne prouve rien. Contrepartie : mettre à jour volontairement l'image et les actions (Node.js 20 déprécié sur checkout@v4, setup-python@v5, setup-terraform@v3).
+**Date** : 2026-10-05
