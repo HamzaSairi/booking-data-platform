@@ -1,3 +1,6 @@
+import os
+import os
+
 """Extraction Postgres -> Parquet, bornée par une fenêtre temporelle.
 
 Fonction pure du couple (source, fenêtre) : aucun état lu ni écrit. Le
@@ -10,7 +13,6 @@ vient de l'environnement, `.env` en local ou variables injectées par
 Compose côté orchestrateur.
 """
 
-import os
 from datetime import datetime
 from pathlib import Path
 
