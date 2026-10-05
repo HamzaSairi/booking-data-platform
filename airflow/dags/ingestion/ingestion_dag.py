@@ -69,9 +69,7 @@ def fenetre(ctx) -> tuple:
     # Garde-fou (ADR-028) : l'horloge sert à refuser, jamais à calculer
     # la fenêtre. Une fenêtre non close donnerait un run vert et incomplet.
     if fin > pendulum.now("UTC"):
-        raise AirflowFailException(
-            f"Fenêtre [{debut}, {fin}) non close : extraction refusée."
-        )
+        raise AirflowFailException(f"Fenêtre [{debut}, {fin}) non close : extraction refusée.")
     return debut, fin
 
 
@@ -81,7 +79,7 @@ def fenetre(ctx) -> tuple:
     # Airflow 3 le déclenche à son début : il lirait une journée à venir.
     schedule=CronDataIntervalTimetable("@daily", timezone="UTC"),
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
-    catchup=True,           # les intervalles manquants sont rattrapés
+    catchup=True,  # les intervalles manquants sont rattrapés
     # Les partitions étant indépendantes, deux runs concurrents ne se
     # corrompent plus. On reste à 1 pour ménager Postgres et les quotas
     # de load jobs pendant un backfill : c'est une limite de débit,

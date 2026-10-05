@@ -29,7 +29,7 @@ from ingestion.extract import (
 from ingestion.load import DATASET, load_one, projet
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-CUTOFF = datetime(2026, 9, 1, tzinfo=UTC)          # start_date du DAG
+CUTOFF = datetime(2026, 9, 1, tzinfo=UTC)  # start_date du DAG
 DATE_SNAPSHOT = datetime(2026, 8, 31, tzinfo=UTC)  # sa veille
 
 
@@ -51,8 +51,9 @@ def partition_existe(table: str) -> bool:
 
 def snapshot_one(table: str, force: bool = False) -> int:
     if not force and partition_existe(table):
-        print(f"{table:>10} : partition {DATE_SNAPSHOT:%F} deja ecrite, ignore "
-              f"(--force pour ecraser)")
+        print(
+            f"{table:>10} : partition {DATE_SNAPSHOT:%F} deja ecrite, ignore (--force pour ecraser)"
+        )
         return 0
 
     with connect() as conn:
@@ -70,14 +71,14 @@ def snapshot_one(table: str, force: bool = False) -> int:
 
 def run(force: bool = False) -> None:
     total = sum(snapshot_one(table, force) for table in TABLES)
-    print(f"\nSnapshot termine : {total} lignes dans la partition "
-          f"{DATE_SNAPSHOT:%F}.")
+    print(f"\nSnapshot termine : {total} lignes dans la partition {DATE_SNAPSHOT:%F}.")
 
 
 if __name__ == "__main__":
     import argparse
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--force", action="store_true",
-                   help="ecrase la partition du snapshot si elle existe")
+    p.add_argument(
+        "--force", action="store_true", help="ecrase la partition du snapshot si elle existe"
+    )
     run(p.parse_args().force)

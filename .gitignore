@@ -23,3 +23,4 @@ dbt/booking_analytics/target/
 dbt/booking_analytics/dbt_packages/
 .vscode/
 !debezium/*.json
+tfplan

@@ -14,7 +14,7 @@ from airflow.sdk import dag, task
 
 @dag(
     dag_id="verif_source",
-    schedule=None,             # déclenchement manuel : la planification, c'est le jour 12
+    schedule=None,  # déclenchement manuel : la planification, c'est le jour 12
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
     catchup=False,
     tags=["socle"],

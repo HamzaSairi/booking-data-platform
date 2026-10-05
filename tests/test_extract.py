@@ -17,8 +17,7 @@ from ingestion.extract import chemin_partition, extract_one
 TABLES = ["hotels", "customers", "bookings", "payments"]
 
 # Fenetre d'hier : close, donc son contenu ne bouge plus pendant le test.
-DEBUT = (datetime.now(UTC) - timedelta(days=1)).replace(
-    hour=0, minute=0, second=0, microsecond=0)
+DEBUT = (datetime.now(UTC) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 FIN = DEBUT + timedelta(days=1)
 
 
@@ -51,8 +50,7 @@ def test_extraction_complete(table, cur):
     extract_one(table, DEBUT, FIN)
 
     cur.execute(
-        f"SELECT count(*) FROM {table} "
-        "WHERE updated_at >= %(debut)s AND updated_at < %(fin)s",
+        f"SELECT count(*) FROM {table} WHERE updated_at >= %(debut)s AND updated_at < %(fin)s",
         {"debut": DEBUT, "fin": FIN},
     )
     n_source = cur.fetchone()[0]

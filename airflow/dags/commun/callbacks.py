@@ -83,9 +83,8 @@ def construire_evenement(context, evenement: str) -> dict:
         # try_number est cumulé à travers les clear, et max_tries compte
         # les RELANCES : l'échec définitif s'écrit tentative = relances_max + 1
         # (mesuré au jour 14 : tentative 10, relances_max 9).
-        "relances_max": getattr(ti, "max_tries", None),        "duree_tentative_s": (
-            round((maintenant - debut).total_seconds(), 1) if debut else None
-        ),
+        "relances_max": getattr(ti, "max_tries", None),
+        "duree_tentative_s": (round((maintenant - debut).total_seconds(), 1) if debut else None),
         "exception_type": type(exc).__name__ if exc is not None else None,
         # Tronqué : une trace psycopg ou BigQuery peut faire des Ko.
         "exception_message": str(exc)[:500] if exc is not None else None,

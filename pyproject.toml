@@ -1,17 +1,11 @@
 
-
 [tool.ruff]
 line-length = 100
-target-version = "py311"
-exclude = [".venv", "dbt", "airflow/logs"]
+target-version = "py312"   # aligne sur `python --version` dans ton venv WSL
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "B"]   # erreurs, pyflakes, imports triés, bugs probables
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "bigquery: interroge BigQuery (lent, scanne des octets, effets de bord)",
-]
-addopts = "-q -m 'not bigquery'"
 pythonpath = [".", "airflow/dags"]
+markers = ["bigquery: nécessite BigQuery — exclu du CI"]

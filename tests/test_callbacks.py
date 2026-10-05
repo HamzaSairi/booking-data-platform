@@ -40,9 +40,7 @@ def journal(tmp_path, monkeypatch):
 
 
 def lire(chemin: Path) -> list[dict]:
-    return [
-        json.loads(ligne) for ligne in chemin.read_text(encoding="utf-8").splitlines()
-    ]
+    return [json.loads(ligne) for ligne in chemin.read_text(encoding="utf-8").splitlines()]
 
 
 def test_echec_ecrit_une_ligne_complete(journal):
@@ -80,9 +78,7 @@ def test_les_evenements_s_ajoutent_sans_ecraser(journal):
             "S2a",
         ),
         (
-            exception(
-                "Forbidden", "403 Quota exceeded: Your table exceeded quota for imports"
-            ),
+            exception("Forbidden", "403 Quota exceeded: Your table exceeded quota for imports"),
             "S2b",
         ),
         (exception("ConnectionTimeout", "connection timeout expired"), "S1b"),
@@ -94,9 +90,7 @@ def test_classement(exc, attendu):
     assert classer(exc) == attendu
 
 
-@pytest.mark.parametrize(
-    "ctx", [{}, None, {"ti": object(), "exception": "pas une exception"}]
-)
+@pytest.mark.parametrize("ctx", [{}, None, {"ti": object(), "exception": "pas une exception"}])
 def test_le_callback_ne_leve_jamais(ctx, tmp_path, monkeypatch, caplog):
     # Chemin impossible : le « dossier » parent est un fichier.
     obstacle = tmp_path / "obstacle"

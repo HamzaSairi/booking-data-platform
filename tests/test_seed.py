@@ -1,12 +1,10 @@
 """Verifie que le seed produit une base coherente, pas seulement peuplee."""
 
 
-
 def test_tables_peuplees(cur):
     for table, mini in [("hotels", 50), ("customers", 500), ("bookings", 2000)]:
         n = cur.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
         assert n >= mini, f"{table} : {n} lignes"
-
 
 
 def test_dates_de_sejour_coherentes(cur):
@@ -19,6 +17,7 @@ def test_dates_de_sejour_coherentes(cur):
         SELECT count(*) FROM bookings WHERE check_out <= check_in
     """).fetchone()[0]
     assert n == 0
+
 
 def test_pendings_perimes_restent_marginaux(cur):
     """Une réservation 'pending' après son check_out est un défaut ASSUMÉ (ADR-003).
@@ -37,21 +36,22 @@ def test_pendings_perimes_restent_marginaux(cur):
 
 def test_donnees_etalees_dans_le_temps(cur):
     """Le piege du DEFAULT clock_timestamp() : tout au meme instant."""
-    n = cur.execute(
-        "SELECT count(DISTINCT created_at::date) FROM bookings"
-    ).fetchone()[0]
+    n = cur.execute("SELECT count(DISTINCT created_at::date) FROM bookings").fetchone()[0]
     assert n >= 60
 
 
 def test_correlation_fidelite(cur):
     """Un client gold doit reserver nettement plus qu'un standard."""
-    rows = dict(cur.execute("""
+    rows = dict(
+        cur.execute("""
         SELECT c.loyalty_tier,
                count(b.booking_id)::float / count(DISTINCT c.customer_id)
         FROM customers c LEFT JOIN bookings b USING (customer_id)
         GROUP BY 1
-    """).fetchall())
+    """).fetchall()
+    )
     assert rows["gold"] > rows["silver"] > rows["standard"]
+
 
 def test_reservations_anterieures_a_leur_client_restent_marginales(cur):
     """Defaut n°7 de l'ADR-003 : dimension a arrivee tardive, injectee.
@@ -65,6 +65,7 @@ def test_reservations_anterieures_a_leur_client_restent_marginales(cur):
         FROM bookings b JOIN customers c USING (customer_id)
     """).fetchone()
     assert n / total < 0.02, f"{n}/{total} reservations anterieures a leur client"
+
 
 # tests/test_extract.py
 def test_seconde_extraction_ne_produit_presque_rien():

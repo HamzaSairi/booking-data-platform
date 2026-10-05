@@ -26,7 +26,7 @@ from google.cloud import bigquery
 load_dotenv()
 
 DATASET = "raw_booking"
-LOCATION = "EU"                      # doit correspondre au dataset
+LOCATION = "EU"  # doit correspondre au dataset
 
 # Ancrées sur la racine du dépôt, jamais sur le répertoire courant :
 # Airflow exécute ses tâches depuis /opt/airflow.
@@ -94,8 +94,9 @@ def annoter(fichiers: list[str], ingested_at: datetime, debut: datetime) -> pa.T
     return pa.concat_tables(morceaux, promote_options="permissive")
 
 
-def charger(client: bigquery.Client, destination: str, table: str,
-            arrow: pa.Table, amorcage: bool) -> int:
+def charger(
+    client: bigquery.Client, destination: str, table: str, arrow: pa.Table, amorcage: bool
+) -> int:
     """Joue le load job. `destination` porte le décorateur de partition en
     régime normal, la table nue à l'amorçage."""
     config = bigquery.LoadJobConfig(
@@ -114,16 +115,14 @@ def charger(client: bigquery.Client, destination: str, table: str,
     else:
         # Une colonne ajoutée en source ne doit pas faire échouer le
         # pipeline. Une colonne supprimée, si — c'est la question 8.
-        config.schema_update_options = [
-            bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
-        ]
+        config.schema_update_options = [bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION]
 
     buf = io.BytesIO()
     pq.write_table(arrow, buf, compression="snappy")
-    buf.seek(0)                      # sans quoi BigQuery lirait zéro octet
+    buf.seek(0)  # sans quoi BigQuery lirait zéro octet
 
     job = client.load_table_from_file(buf, destination, job_config=config, location=LOCATION)
-    job.result()                     # lève l'exception si le job échoue
+    job.result()  # lève l'exception si le job échoue
     # output_rows n'est pas garanti sur un WRITE_TRUNCATE avec décorateur
     # de partition ; le compte du Parquet fait foi puisque le job a réussi.
     return job.output_rows if job.output_rows is not None else arrow.num_rows

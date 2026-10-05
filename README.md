@@ -95,7 +95,7 @@ Cinq valeurs à renseigner dans `.env` :
 | Variable | Valeur |
 |---|---|
 | `POSTGRES_PASSWORD` | au choix |
-| `GCP_PROJECT_ID` | l'identifiant de ton projet GCP |
+| `GCP_PROJECT_ID` |  |
 | `GOOGLE_APPLICATION_CREDENTIALS` | chemin **absolu** de la clé du compte de service, hors du dépôt |
 | `AIRFLOW_UID` | ton UID : `id -u` |
 | `FERNET_KEY` | à générer (ci-dessous) |

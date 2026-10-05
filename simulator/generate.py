@@ -4,6 +4,7 @@ Commandes :
     seed      — peuple la base avec un jeu de données initial cohérent
     simulate  — (Jour 4) fait vivre la base : modifications, défauts
 """
+
 import json
 import os
 import random
@@ -24,12 +25,26 @@ load_dotenv()
 
 # ─── Constantes ──────────────────────────────────────────────────────
 CITIES = [
-    ("Paris", "FR"), ("Lyon", "FR"), ("Marseille", "FR"), ("Nice", "FR"),
-    ("Barcelona", "ES"), ("Madrid", "ES"), ("Sevilla", "ES"),
-    ("Roma", "IT"), ("Milano", "IT"), ("Venezia", "IT"),
-    ("Lisboa", "PT"), ("Porto", "PT"), ("Amsterdam", "NL"),
-    ("Berlin", "DE"), ("Munchen", "DE"), ("Wien", "AT"),
-    ("Bruxelles", "BE"), ("Geneve", "CH"), ("Praha", "CZ"), ("Athina", "GR"),
+    ("Paris", "FR"),
+    ("Lyon", "FR"),
+    ("Marseille", "FR"),
+    ("Nice", "FR"),
+    ("Barcelona", "ES"),
+    ("Madrid", "ES"),
+    ("Sevilla", "ES"),
+    ("Roma", "IT"),
+    ("Milano", "IT"),
+    ("Venezia", "IT"),
+    ("Lisboa", "PT"),
+    ("Porto", "PT"),
+    ("Amsterdam", "NL"),
+    ("Berlin", "DE"),
+    ("Munchen", "DE"),
+    ("Wien", "AT"),
+    ("Bruxelles", "BE"),
+    ("Geneve", "CH"),
+    ("Praha", "CZ"),
+    ("Athina", "GR"),
 ]
 
 HOTEL_PREFIXES = ["Hotel", "Grand Hotel", "Residence", "Auberge", "Villa"]
@@ -124,13 +139,13 @@ def insert_hotels(cur, faker: Faker, n: int) -> list[tuple[int, int]]:
         returning=True,
     )
     ids = fetch_returned_ids(cur)
-    return list(zip(ids, (r[3] for r in rows)))
+    return list(zip(ids, (r[3] for r in rows), strict=True))
 
 
 def insert_customers(cur, faker: Faker, n: int) -> list[tuple[int, datetime, str]]:
     """Insere n clients. Renvoie (customer_id, created_at, loyalty_tier)."""
     now = now_utc()
-    start = now - timedelta(days=548)          # 18 mois
+    start = now - timedelta(days=548)  # 18 mois
 
     rows = []
     for i in range(n):
@@ -138,9 +153,7 @@ def insert_customers(cur, faker: Faker, n: int) -> list[tuple[int, datetime, str
         # Email derive du nom (et non faker.email()) : au Jour 19, on doit
         # pouvoir verifier a l'oeil qu'un email modifie appartient au bon client.
         email = f"{first}.{last}{i}@example.com".lower().replace(" ", "")
-        tier = random.choices(
-            ["standard", "silver", "gold"], weights=[70, 20, 10]
-        )[0]
+        tier = random.choices(["standard", "silver", "gold"], weights=[70, 20, 10])[0]
         created = random_datetime_between(start, now)
         rows.append((first, last, email, tier, created, created))
 
@@ -155,7 +168,7 @@ def insert_customers(cur, faker: Faker, n: int) -> list[tuple[int, datetime, str
         returning=True,
     )
     ids = fetch_returned_ids(cur)
-    return [(cid, r[4], r[3]) for cid, r in zip(ids, rows)]
+    return [(cid, r[4], r[3]) for cid, r in zip(ids, rows, strict=True)]
 
 
 def insert_bookings(cur, hotels, customers, n: int, days: int) -> list[tuple]:
@@ -199,8 +212,9 @@ def insert_bookings(cur, hotels, customers, n: int, days: int) -> list[tuple]:
         choices, w = STATUS_PAST if check_out < today else STATUS_FUTURE
         status = random.choices(choices, weights=w)[0]
 
-        rows.append((cust_id, hotel_id, check_in, check_out, status,
-                     amount, "EUR", created, created))
+        rows.append(
+            (cust_id, hotel_id, check_in, check_out, status, amount, "EUR", created, created)
+        )
 
     cur.executemany(
         """
@@ -214,7 +228,7 @@ def insert_bookings(cur, hotels, customers, n: int, days: int) -> list[tuple]:
         returning=True,
     )
     ids = fetch_returned_ids(cur)
-    return [(bid, r[4], r[5], r[6], r[7]) for bid, r in zip(ids, rows)]
+    return [(bid, r[4], r[5], r[6], r[7]) for bid, r in zip(ids, rows, strict=True)]
 
 
 def insert_payments(cur, bookings) -> int:
@@ -222,7 +236,7 @@ def insert_payments(cur, bookings) -> int:
     rows = []
     for booking_id, status, amount, currency, created in bookings:
         if status not in ("confirmed", "completed"):
-            continue          # on ne paie pas une reservation annulee
+            continue  # on ne paie pas une reservation annulee
 
         # paid_at est une date METIER : une capture differee de 48 h est
         # plausible. created_at/updated_at sont des metadonnees TECHNIQUES :
@@ -231,12 +245,21 @@ def insert_payments(cur, bookings) -> int:
         paid_at = created + timedelta(hours=random.uniform(0, 48))
         tech = min(paid_at, now_utc())
 
-        rows.append((booking_id, amount, currency,
-                     random.choice(["card", "transfer", "paypal", "cash"]),
-                     "captured", paid_at, tech, tech))
+        rows.append(
+            (
+                booking_id,
+                amount,
+                currency,
+                random.choice(["card", "transfer", "paypal", "cash"]),
+                "captured",
+                paid_at,
+                tech,
+                tech,
+            )
+        )
 
     if not rows:
-        return 0          # executemany sur une liste vide leve une erreur
+        return 0  # executemany sur une liste vide leve une erreur
 
     cur.executemany(
         """
@@ -274,11 +297,8 @@ def complete_past_stays(cur) -> int:
     for bid, status in rows:
         # Un 'pending' dont le sejour est passe n'a jamais ete honore.
         new = "completed" if status == "confirmed" else "cancelled"
-        cur.execute(
-            "UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid)
-        )
-        log_event("status_change", booking_id=bid, old=status, to=new,
-                  reason="stay_elapsed")
+        cur.execute("UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid))
+        log_event("status_change", booking_id=bid, old=status, to=new, reason="stay_elapsed")
     return len(rows)
 
 
@@ -290,16 +310,13 @@ def advance_statuses(cur, n: int) -> int:
     puisqu'elle ne lit que la valeur presente au moment de son passage.
     """
     rows = cur.execute(
-        "SELECT booking_id FROM bookings WHERE status = 'pending' "
-        "ORDER BY random() LIMIT %s",
+        "SELECT booking_id FROM bookings WHERE status = 'pending' ORDER BY random() LIMIT %s",
         (n,),
     ).fetchall()
 
     for (bid,) in rows:
         new = random.choices(["confirmed", "cancelled"], weights=[80, 20])[0]
-        cur.execute(
-            "UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid)
-        )
+        cur.execute("UPDATE bookings SET status = %s WHERE booking_id = %s", (new, bid))
         log_event("status_change", booking_id=bid, to=new)
 
         if new == "confirmed" and random.random() < 0.15:
@@ -307,8 +324,7 @@ def advance_statuses(cur, n: int) -> int:
                 "UPDATE bookings SET status = 'cancelled' WHERE booking_id = %s",
                 (bid,),
             )
-            log_event("status_change", booking_id=bid, to="cancelled",
-                      intermediate=True)
+            log_event("status_change", booking_id=bid, to="cancelled", intermediate=True)
     return len(rows)
 
 
@@ -319,8 +335,7 @@ def mutate_customers(cur, n: int) -> int:
     'standard' sur sa reservation de mars et 'gold' sur celle de juin.
     """
     rows = cur.execute(
-        "SELECT customer_id, loyalty_tier FROM customers "
-        "ORDER BY random() LIMIT %s",
+        "SELECT customer_id, loyalty_tier FROM customers ORDER BY random() LIMIT %s",
         (n,),
     ).fetchall()
 
@@ -330,8 +345,7 @@ def mutate_customers(cur, n: int) -> int:
                 "UPDATE customers SET loyalty_tier = %s WHERE customer_id = %s",
                 (TIER_UP[tier], cid),
             )
-            log_event("tier_change", customer_id=cid,
-                      old=tier, new=TIER_UP[tier])
+            log_event("tier_change", customer_id=cid, old=tier, new=TIER_UP[tier])
         else:
             cur.execute(
                 "UPDATE customers SET email = split_part(email, '@', 1) "
@@ -416,18 +430,19 @@ def inject_defects(cur, rate: float) -> Counter:
     # 3. Doublon de paiement — double soumission d'un formulaire.
     #    Dimension : unicite. Sera dedoublonne au Jour 17.
     if fires():
-        row = cur.execute(
-            "SELECT payment_id FROM payments ORDER BY random() LIMIT 1"
-        ).fetchone()
+        row = cur.execute("SELECT payment_id FROM payments ORDER BY random() LIMIT 1").fetchone()
         if row:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO payments (booking_id, amount, currency,
                                       payment_method, status, paid_at,
                                       created_at, updated_at)
                 SELECT booking_id, amount, currency, payment_method, status,
                        paid_at, now(), now()
                 FROM payments WHERE payment_id = %s
-            """, (row[0],))
+            """,
+                (row[0],),
+            )
             log_event("defect", defect="duplicate_payment", source_id=row[0])
             fired["duplicate_payment"] += 1
 
@@ -441,16 +456,15 @@ def inject_defects(cur, rate: float) -> Counter:
                 "UPDATE customers SET email = %s WHERE customer_id = %s",
                 (rows[0][1], rows[1][0]),
             )
-            log_event("defect", defect="duplicate_email",
-                      customer_id=rows[1][0], copied_from=rows[0][0])
+            log_event(
+                "defect", defect="duplicate_email", customer_id=rows[1][0], copied_from=rows[0][0]
+            )
             fired["duplicate_email"] += 1
 
     # 5. Devise non normalisee. Dimension : validite.
     #    Sera corrigee dans stg_bookings au Jour 17.
     if fires():
-        row = cur.execute(
-            "SELECT booking_id FROM bookings ORDER BY random() LIMIT 1"
-        ).fetchone()
+        row = cur.execute("SELECT booking_id FROM bookings ORDER BY random() LIMIT 1").fetchone()
         if row:
             cur.execute(
                 "UPDATE bookings SET currency = %s WHERE booking_id = %s",
@@ -463,8 +477,7 @@ def inject_defects(cur, rate: float) -> Counter:
     #    Dimension : exactitude. Regle metier, pas regle technique.
     if fires():
         row = cur.execute(
-            "SELECT booking_id FROM bookings WHERE total_amount > 0"
-            " ORDER BY random() LIMIT 1"
+            "SELECT booking_id FROM bookings WHERE total_amount > 0 ORDER BY random() LIMIT 1"
         ).fetchone()
         if row:
             cur.execute(
@@ -480,28 +493,41 @@ def inject_defects(cur, rate: float) -> Counter:
     #    jour. Une jointure naive au Jour 18 perd la ligne SILENCIEUSEMENT.
     if fires():
         back = now_utc() - timedelta(days=random.randint(2, 3))
-        cid = cur.execute("""
+        cid = cur.execute(
+            """
             INSERT INTO customers (first_name, last_name, email, loyalty_tier,
                                    created_at, updated_at)
             VALUES ('Tardif', 'Client', %s, 'standard', now(), now())
             RETURNING customer_id
-        """, (f"tardif.{random.randint(10000, 99999)}@example.com",)).fetchone()[0]
+        """,
+            (f"tardif.{random.randint(10000, 99999)}@example.com",),
+        ).fetchone()[0]
 
         hid, stars = cur.execute(
             "SELECT hotel_id, stars FROM hotels ORDER BY random() LIMIT 1"
         ).fetchone()
-        bid = cur.execute("""
+        bid = cur.execute(
+            """
             INSERT INTO bookings (customer_id, hotel_id, check_in, check_out,
                                   status, total_amount, currency,
                                   created_at, updated_at)
             VALUES (%s, %s, %s, %s, 'pending', %s, 'EUR', %s, %s)
             RETURNING booking_id
-        """, (cid, hid, back.date() + timedelta(days=10),
-              back.date() + timedelta(days=13),
-              Decimal(3 * BASE_PRICE[stars]), back, back)).fetchone()[0]
+        """,
+            (
+                cid,
+                hid,
+                back.date() + timedelta(days=10),
+                back.date() + timedelta(days=13),
+                Decimal(3 * BASE_PRICE[stars]),
+                back,
+                back,
+            ),
+        ).fetchone()[0]
 
-        log_event("defect", defect="late_arriving",
-                  booking_id=bid, customer_id=cid, backdated_to=back)
+        log_event(
+            "defect", defect="late_arriving", booking_id=bid, customer_id=cid, backdated_to=back
+        )
         fired["late_arriving"] += 1
 
     return fired
@@ -517,12 +543,17 @@ def cli() -> None:
 @click.option("--hotels", "n_hotels", default=50, show_default=True)
 @click.option("--customers", "n_customers", default=500, show_default=True)
 @click.option("--bookings", "n_bookings", default=2000, show_default=True)
-@click.option("--days", default=90, show_default=True,
-              help="Fenetre de repartition des reservations.")
-@click.option("--seed", "rng_seed", default=42, show_default=True,
-              help="Graine des generateurs aleatoires (cf. ADR-004).")
-@click.option("--truncate", is_flag=True,
-              help="Vide les tables avant insertion.")
+@click.option(
+    "--days", default=90, show_default=True, help="Fenetre de repartition des reservations."
+)
+@click.option(
+    "--seed",
+    "rng_seed",
+    default=42,
+    show_default=True,
+    help="Graine des generateurs aleatoires (cf. ADR-004).",
+)
+@click.option("--truncate", is_flag=True, help="Vide les tables avant insertion.")
 def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
     """Peuple la base avec un jeu de donnees initial."""
     random.seed(rng_seed)
@@ -533,10 +564,7 @@ def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
     # existent, soit aucune.
     with connect() as conn, conn.cursor() as cur:
         if truncate:
-            cur.execute(
-                "TRUNCATE payments, bookings, customers, hotels "
-                "RESTART IDENTITY CASCADE"
-            )
+            cur.execute("TRUNCATE payments, bookings, customers, hotels RESTART IDENTITY CASCADE")
         else:
             existing = cur.execute("SELECT count(*) FROM hotels").fetchone()[0]
             if existing:
@@ -559,16 +587,23 @@ def seed(n_hotels, n_customers, n_bookings, days, rng_seed, truncate) -> None:
 
 
 @cli.command()
-@click.option("--minutes", default=5, show_default=True,
-              help="Duree de la simulation.")
-@click.option("--defect-rate", default=0.05, show_default=True,
-              help="Probabilite de chaque type de defaut, par tour.")
-@click.option("--interval", default=10, show_default=True,
-              help="Secondes entre deux tours de boucle.")
-@click.option("--seed", "rng_seed", default=None, type=int,
-              help="Graine. Par defaut aleatoire : on veut de la variete.")
-
-
+@click.option("--minutes", default=5, show_default=True, help="Duree de la simulation.")
+@click.option(
+    "--defect-rate",
+    default=0.05,
+    show_default=True,
+    help="Probabilite de chaque type de defaut, par tour.",
+)
+@click.option(
+    "--interval", default=10, show_default=True, help="Secondes entre deux tours de boucle."
+)
+@click.option(
+    "--seed",
+    "rng_seed",
+    default=None,
+    type=int,
+    help="Graine. Par defaut aleatoire : on veut de la variete.",
+)
 def simulate(minutes, defect_rate, interval, rng_seed) -> None:
     """Fait vivre la base : creations, transitions, modifications, suppressions."""
     if rng_seed is not None:
@@ -591,8 +626,7 @@ def simulate(minutes, defect_rate, interval, rng_seed) -> None:
                 # temps depuis le dernier tour. L'activite vient ensuite.
                 n_aged = complete_past_stays(cur)
 
-                new = insert_bookings(cur, hotels, customers,
-                                      random.randint(3, 8), days=0)
+                new = insert_bookings(cur, hotels, customers, random.randint(3, 8), days=0)
                 n_pay = insert_payments(cur, new)
                 for bid, *_ in new:
                     log_event("insert_booking", booking_id=bid)
@@ -612,6 +646,7 @@ def simulate(minutes, defect_rate, interval, rng_seed) -> None:
             time.sleep(interval)
 
     click.echo(f"\nTermine. Journal : {LOG_PATH}")
+
 
 def expire_past_stays(cur) -> dict[str, int]:
     """Fait vieillir la base : du temps a passé depuis le dernier lancement.
