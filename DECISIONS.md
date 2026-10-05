@@ -792,7 +792,7 @@ ne démarre » → vérifier les runs en cours avant toute autre hypothèse.
 **Statut** : révisée par ADR-028.
 Airflow 3.3 renseigne data_interval_start == data_interval_end sur un DAG à schedule cron. Une extraction bornée par ces deux valeurs ne rend jamais rien, sans erreur : huit runs verts, zéro octet. Fenêtre calculée comme [logical_date, logical_date + FENETRE) par une fonction unique partagée par les trois tâches — un calcul divergent entre extract et validate ferait rejeter des données correctes. Coût : FENETRE doit rester cohérente avec schedule à la main.
 
-## ADR-023 — L'amorçage d'une table n'est pas idempotent sous concurrence. 
+## ADR-023 — L'amorçage d'une table n'est pas idempotent sous concurrence.
 
 load_one teste l'existence de la table puis charge : ces deux opérations ne sont pas atomiques. Huit runs de backfill lancés simultanément — max_active_runs du DAG ne s'applique pas à un backfill, qui a sa propre limite — ont tous reçu NotFound et écrit en WRITE_TRUNCATE sur la table nue, se détruisant mutuellement : quatre partitions sur huit ont survécu. Parade immédiate : --max-active-runs 1 sur le backfill, et pré-création des tables. Parade durable : sortir la création de table du pipeline et la confier à Terraform (jour 26).
 

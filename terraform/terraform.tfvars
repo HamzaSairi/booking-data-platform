@@ -1,1 +1,0 @@
-project_id = "booking-data-platform-b7768d"

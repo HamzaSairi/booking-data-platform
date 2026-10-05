@@ -24,3 +24,4 @@ dbt/booking_analytics/dbt_packages/
 .vscode/
 !debezium/*.json
 tfplan
+terraform/terraform.tfvars

@@ -438,4 +438,3 @@ af backfill create --dag-id ingestion_batch \
 - `catchup=True` : au démarrage, le scheduler lance seul les intervalles sans
   run. Sans risque (jamais chargés, rien d'écrasé), mais c'est ce mécanisme
   qui a produit le rechargement du 22/09.
-

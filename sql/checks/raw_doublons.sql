@@ -23,4 +23,3 @@ SELECT 'payments',
        (SELECT COUNT(*) FROM `booking-data-platform-b7768d.staging_booking.stg_payments`);
 
        // 500 / 50 / 2046 / 1741
-
