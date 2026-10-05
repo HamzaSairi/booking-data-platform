@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,7 +23,12 @@ jobs:
 
   tests:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      POSTGRES_PASSWORD: ci_password            # base jetable, propre au CI
+      FERNET_KEY: ci-dummy-airflow-not-started  # requis par Compose, inutilisé
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/inutile.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,11 +48,16 @@ jobs:
 
   dbt:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-sa.json
       DBT_PROFILES_DIR: ${{ github.workspace }}/dbt/booking_analytics
+      BQ_LOCATION: EU
+      BQ_DATASET_RAW: raw_booking
+      BQ_DATASET_STAGING: staging_booking
+      BQ_DATASET_MARTS: marts_booking
+      BQ_MAX_BYTES_BILLED: "10737418240"
     defaults:
       run:
         working-directory: dbt/booking_analytics
@@ -61,11 +71,11 @@ jobs:
       - name: Clé GCP
         run: echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 -d > "$GOOGLE_APPLICATION_CREDENTIALS"
       - run: dbt deps
-      - run: dbt compile --target ci
+      - run: dbt compile
 
   terraform:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: terraform

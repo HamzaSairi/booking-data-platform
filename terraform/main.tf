@@ -1,10 +1,10 @@
 resource "google_bigquery_dataset" "datasets" {
-  for_each   = var.datasets
-  dataset_id = each.key
-  location   = var.bq_location
+  for_each                        = var.datasets
+  dataset_id                      = each.key
+  location                        = var.bq_location
   default_table_expiration_ms     = var.bq_sandbox_expiration_ms
-  default_partition_expiration_ms = var.bq_sandbox_expiration_ms  
-  delete_contents_on_destroy = var.delete_contents_on_destroy
+  default_partition_expiration_ms = var.bq_sandbox_expiration_ms
+  delete_contents_on_destroy      = var.delete_contents_on_destroy
 
   labels = {
     project    = "booking-data-platform"
