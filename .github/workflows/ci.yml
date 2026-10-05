@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Démarrer Postgres
+        run: |
+          cp .env.example .env
+          docker compose up -d postgres
+          until docker compose exec -T postgres pg_isready -U booking; do sleep 2; done
+      - name: Peupler la base
+        run: python simulator/generate.py seed
+      - name: Tests (hors BigQuery)
+        run: pytest -m "not bigquery" -v
+
+  dbt:
+    needs: lint
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt/booking_analytics
+    defaults:
+      run:
+        working-directory: dbt/booking_analytics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r ${{ github.workspace }}/requirements.txt
+      - name: Clé GCP
+        run: echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 -d > "$GOOGLE_APPLICATION_CREDENTIALS"
+      - run: dbt deps
+      - run: dbt compile --target ci
+
+  terraform:
+    needs: lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
