@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-sa.json
       DBT_PROFILES_DIR: ${{ github.workspace }}/dbt/booking_analytics
     defaults:
       run:
