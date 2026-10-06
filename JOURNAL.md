@@ -1418,3 +1418,4 @@ qu'Airflow est resté arrêté du jour 15 au jour 28.
 par table (hotels 98 %, payments 52 %, bookings 42 %, customers 15 %).
 Décision : rester en sandbox, échéance documentée (ADR). Requête de détection
 à J−7 ajoutée. Jours 29–30 à terminer avant le 30 octobre.
+- Jour 28 : tables *_avant_reconstruction (sauvegardes du jour 17) supprimées.
