@@ -14,7 +14,7 @@ variable "bq_location" {
 
 variable "datasets" {
   type    = set(string)
-  default = ["raw_booking", "staging_booking", "marts_booking"]
+  default = ["raw_booking", "staging_booking", "marts_booking", "ops_booking"]
 }
 
 variable "delete_contents_on_destroy" {
