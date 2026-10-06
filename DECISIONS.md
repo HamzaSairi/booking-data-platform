@@ -1555,3 +1555,48 @@ callback de succès du premier), table à 121 lignes, `_charge_le` unique →
 qui évolue ; un run planifié démarre après la fin de son intervalle.
 
 **Date** : 2026-10-06
+
+## ADR-041 — Rester en bac à sable malgré l'expiration à 60 jours de la raw
+
+**Contexte** : le sandbox BigQuery impose une expiration de 60 jours aux
+partitions et aux tables (`defaultPartitionExpirationMs` =
+`defaultTableExpirationMs` = 5 184 000 000 ms), y compris sur la couche raw.
+La plus ancienne partition raw (`_interval_start` = 2026-08-31) contient le
+chargement initial du seed et expire le **2026-10-30**.
+
+**Mesure** (clés présentes uniquement dans la partition du 31 août) :
+
+| Table raw | Clés | Perdues le 30/10 |
+|---|---:|---:|
+| hotels | 50 | 49 (98 %) |
+| payments | 2 674 | 1 381 (52 %) |
+| bookings | 3 222 | 1 339 (42 %) |
+| customers | 511 | 76 (15 %) |
+
+`fct_bookings` (CDC, ADR-039) tient jusqu'au 2026-12-01 (partitions CDC du
+2 octobre), mais sa jointure à `dim_hotels` et aux paiements casse dès le 30.
+
+**Options** : (a) activer la facturation et retirer les expirations par
+Terraform ; (b) rester en sandbox, échéance documentée ; (c) ré-extraction
+complète périodique pour faire repartir le compteur.
+
+**Décision** : (b).
+**Raison** : projet de démonstration à durée de vie courte ; seed figé
+(graine 42) et reconstruction depuis zéro testée depuis le jour 5. (c) est
+écartée : elle complique le pipeline pour masquer une contrainte de
+l'environnement.
+
+**Coût assumé** :
+- la plateforme n'est pas durable : livrables du jour 30 (captures, vidéo)
+  à produire avant le 2026-10-30 ;
+- l'historique SCD2 ne se reconstruit pas depuis le seed : il est perdu si sa
+  table expire sans export préalable ;
+- le partitionnement de `fct_bookings` reste impossible (ADR-033).
+
+**Détection** : les tests `relationships` du jour 20 passeraient au rouge
+après la perte ; la requête 4 de `sql/checks/pipeline_sante.sql` la signale
+7 jours **avant**.
+
+**En production** : option (a), sans discussion.
+
+**Date** : 2026-10-06

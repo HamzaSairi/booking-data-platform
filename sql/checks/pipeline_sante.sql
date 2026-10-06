@@ -32,3 +32,17 @@ SELECT exception_type, exception_message, COUNT(*) AS n, MAX(horodatage) AS dern
 FROM `PROJET.raw_booking.pipeline_metrics`
 WHERE evenement IN ('echec', 'relance') AND scenario_runbook IS NULL
 GROUP BY 1, 2 ORDER BY n DESC;
+
+-- 4. Partitions raw qui expirent dans les 7 jours (sandbox : 60 jours, ADR sandbox).
+--    Signale la perte AVANT qu'elle survienne ; les tests relationships ne la
+--    verraient qu'après.
+SELECT table_name, partition_id,
+       DATE_ADD(PARSE_DATE('%Y%m%d', partition_id), INTERVAL 60 DAY) AS expire_le,
+       DATE_DIFF(DATE_ADD(PARSE_DATE('%Y%m%d', partition_id), INTERVAL 60 DAY),
+                 CURRENT_DATE(), DAY) AS jours_restants,
+       total_rows
+FROM `PROJET.raw_booking.INFORMATION_SCHEMA.PARTITIONS`
+WHERE REGEXP_CONTAINS(partition_id, r'^\d{8}$')
+  AND DATE_ADD(PARSE_DATE('%Y%m%d', partition_id), INTERVAL 60 DAY)
+      <= DATE_ADD(CURRENT_DATE(), INTERVAL 7 DAY)
+ORDER BY expire_le, table_name;

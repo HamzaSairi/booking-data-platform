@@ -1413,3 +1413,8 @@ succès) : 10/09 = 48 / 48 ; 06/10 = 147 / 121. L'écart de 26 = un événement 
 succès par run de catchup, écrit après le chargement de la journée en cours.
 Seulement 2 jours sur 27 contiennent des événements : la table confirme
 qu'Airflow est resté arrêté du jour 15 au jour 28.
+
+**Expiration raw** : partitions du 31/08 → disparition le 30/10. Perte mesurée
+par table (hotels 98 %, payments 52 %, bookings 42 %, customers 15 %).
+Décision : rester en sandbox, échéance documentée (ADR). Requête de détection
+à J−7 ajoutée. Jours 29–30 à terminer avant le 30 octobre.

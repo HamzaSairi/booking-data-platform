@@ -16,3 +16,11 @@
   mais seulement si quelqu'un la lance : en production, alerte externe.
 - Les requêtes de détection ne sont pas planifiées : ce sont des vérifications
   manuelles, pas des alertes.
+
+## Durée de vie des données (sandbox)
+
+- Partitions et tables expirent à 60 jours. Échéance mesurée : **2026-10-30**,
+  perte de 98 % des hôtels, 52 % des paiements, 42 % des réservations raw.
+- L'historique SCD2 ne se reconstruit pas depuis le seed.
+- En production : compte de facturation, aucune expiration sur raw et
+  snapshots, expiration explicite uniquement sur les tables temporaires.
