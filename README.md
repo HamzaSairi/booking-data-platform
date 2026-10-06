@@ -1,4 +1,5 @@
 # Booking Data Platform
+![CI](https://github.com/HamzaSairi/booking-data-platform/actions/workflows/ci.yml/badge.svg)
 
 > Plateforme de données répliquant une base transactionnelle PostgreSQL vers
 > BigQuery, en batch puis en change data capture, avec modélisation

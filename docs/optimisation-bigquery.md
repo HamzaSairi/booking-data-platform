@@ -87,3 +87,32 @@ la requête et le volume qui vont avec.
 | Date | Mesure | Résultat |
 |---|---|---|
 | 2026-09-02 | Colonnaire sur `raw_booking.bookings` | 20,5× |
+
+## Mesure 2 : partitionnement et clustering de `fct_bookings` (jour 28)
+
+**Protocole** : `scripts/bench_partitionnement.py`. Trois copies de
+`fct_bookings` construites sur les mêmes 2 069 lignes (55 derniers jours, sous
+l'expiration de partition du sandbox), requêtes sans cache, dry-run puis
+exécution réelle.
+
+| Requête | brut | cluster (ADR-033) | partition + cluster |
+|---|---:|---:|---:|
+| R1 fenêtre 7 j | 66 208 o | 66 208 o | **15 200 o (−77 %)** |
+| R2 un hôtel | 66 208 o | 66 208 o | 65 920 o (−0,4 %) |
+| R3 témoin, sans filtre | 49 656 o | 49 656 o | 49 656 o |
+| **Facturé, toutes requêtes** | 10 Mo | 10 Mo | 10 Mo |
+
+**Constats** :
+- Le partitionnement élague dès le premier octet. Le clustering n'agit qu'à
+  partir de plusieurs blocs de stockage : il est nul ici, sauf un effet de
+  0,4 % visible uniquement en exécution réelle, que le dry-run ne voit pas.
+- Les octets lus valent la taille logique des colonnes × le nombre de lignes
+  (INT64 = 8, DATE = 8, NUMERIC = 16) : 2 069 × 8 = 16 552 o pour `hotel_id`.
+- La facture est au plancher de 10 Mo par requête : le gain réel est de 0 %.
+- Partitionner la table complète aurait supprimé 1 020 lignes sur 3 205 (32 %)
+  à cause de l'expiration à 60 jours du sandbox (ADR-033).
+
+**En production** : avec un compte de facturation, partitionnement par jour
+(ou par mois tant qu'une partition reste très en dessous de 1 Go) sur
+`booking_date`, et clustering sur `hotel_id`. Le clustering ne se justifie
+qu'à partir de quelques centaines de Mo par table.
