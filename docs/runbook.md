@@ -438,3 +438,13 @@ af backfill create --dag-id ingestion_batch \
 - `catchup=True` : au démarrage, le scheduler lance seul les intervalles sans
   run. Sans risque (jamais chargés, rien d'écrasé), mais c'est ce mécanisme
   qui a produit le rechargement du 22/09.
+
+## S4 — Variable d'environnement absente dans un conteneur Airflow
+
+**Symptôme** : `KeyError: 'NOM_VARIABLE'`, `scenario_runbook` nul dans
+pipeline_metrics. La variable existe dans `.env` et marche dans le terminal.
+**Cause** : elle n'est pas déclarée dans `x-airflow-common.environment`.
+**Résolution** : l'ajouter sous la forme `${VAR:?VAR manquant dans .env}`,
+puis recréer **avec les profils** : un `up -d --force-recreate` simple ne
+recrée pas Airflow (profil Compose) et rien ne le signale.
+`docker compose exec -T airflow-scheduler env | grep VAR` pour vérifier.

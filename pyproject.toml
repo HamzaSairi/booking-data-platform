@@ -9,3 +9,6 @@ select = ["E", "F", "I", "B"]   # erreurs, pyflakes, imports triés, bugs probab
 [tool.pytest.ini_options]
 pythonpath = [".", "airflow/dags"]
 markers = ["bigquery: nécessite BigQuery — exclu du CI"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["commun"]

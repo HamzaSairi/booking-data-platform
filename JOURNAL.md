@@ -1383,3 +1383,33 @@ hypothèse par une requête avant de corriger.
 - `test_la_vue_ne_contient_aucune_cle_dupliquee` : `staging_booking.v_hotels` introuvable → vues du jour 9 remplacées par les `stg_*` de dbt ? À vérifier avec `bq ls`.
 
 **Ce que je retiens** : le CI a révélé en une session une dizaine de problèmes que 26 jours de travail local n'avaient pas fait apparaître, dont un test mort depuis deux semaines. Tout ce qui dépendait de « ce qui est activé dans mon terminal » est tombé.
+
+## Jour 28 — Observabilité et coûts
+
+**Fait** : relevé de compteur (INFORMATION_SCHEMA.JOBS), labels de jobs,
+mesure partitionnement vs clustering, `metriques_dag` → pipeline_metrics,
+requêtes de santé (`sql/checks/pipeline_sante.sql`).
+
+**Chiffres** :
+- Facturé ≈ 30× le traité sur un mois : plancher de 10 Mo par requête.
+- Partitionnement : −77 % d'octets traités sur une fenêtre de 7 jours ;
+  clustering : nul (−0,4 %) ; facture : 0 % de gain.
+- Partitionner `fct_bookings` en sandbox aurait supprimé 1 020 / 3 205 lignes
+  (32 %) : ADR-033 confirmé par la mesure.
+
+**Écart au plan** : fraîcheur à 26 h / 50 h et non 24 h. Avec un DAG
+quotidien, 24 h alerterait à chaque run normal.
+
+**Incidents** : intervalle nul d'Airflow 3 (aurait supprimé chaque partition
+sans erreur → ADR) ; variable absente du conteneur, cachée par un profil
+Compose (→ runbook S4) ; un `git add` sur un fichier inexistant n'indexe rien.
+
+**Prédiction** : non faite par moi ; celle de l'assistant, écrite avant
+exécution, s'est vérifiée (partitionnement visible, clustering nul, facture
+au plancher).
+
+**Réconciliation fichier → pipeline_metrics** (catchup de 26 runs, tous en
+succès) : 10/09 = 48 / 48 ; 06/10 = 147 / 121. L'écart de 26 = un événement de
+succès par run de catchup, écrit après le chargement de la journée en cours.
+Seulement 2 jours sur 27 contiennent des événements : la table confirme
+qu'Airflow est resté arrêté du jour 15 au jour 28.

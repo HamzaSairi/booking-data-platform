@@ -1525,3 +1525,33 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 **Décision** : `runs-on: ubuntu-24.04` (identique à mon WSL), Python 3.12 explicite, dépendances figées dans `requirements.txt`.
 **Raison** : sans cela, le CI aurait changé de système dans deux semaines sans aucun commit de ma part. Un CI non reproductible ne prouve rien. Contrepartie : mettre à jour volontairement l'image et les actions (Node.js 20 déprécié sur checkout@v4, setup-python@v5, setup-terraform@v3).
 **Date** : 2026-10-05
+
+## ADR-040 — pipeline_metrics : timetable explicite et garde-fou d'intervalle
+
+**Contexte** : chargement quotidien du JSONL des callbacks dans
+`raw_booking.pipeline_metrics`, par écrasement de partition (WRITE_TRUNCATE ;
+journée vide → suppression de la partition, pour qu'un rejeu ne laisse pas de
+lignes périmées).
+
+**Incident de conception** : en Airflow 3, `schedule="@daily"` utilise un
+CronTriggerTimetable, et `data_interval_start == data_interval_end`. Avec un
+intervalle nul, aucun événement n'est retenu, donc la partition du jour est
+**supprimée** à chaque run, sans erreur. Seul un `KeyError` sur une variable
+d'environnement, survenu juste avant, a empêché la suppression.
+
+**Options** : (a) dériver la journée de `logical_date` ; (b) timetable
+explicite `CronDataIntervalTimetable` ; (c) (b) plus un garde-fou.
+**Décision** : (c). Le planning déclare explicitement des intervalles d'un
+jour, et la tâche refuse tout intervalle différent d'un jour, **avant** de
+lire ses variables ou de toucher BigQuery.
+**Raison** : un code qui supprime des données doit vérifier ses entrées et
+échouer bruyamment, pas traiter une entrée anormale comme une journée calme.
+
+**Vérification** : intervalle nul → `ValueError`, partition intacte.
+Deux runs sur le 6 octobre : 120 puis 121 événements (le second voit le
+callback de succès du premier), table à 121 lignes, `_charge_le` unique →
+écrasement, pas d'ajout.
+**Limite** : charger une journée non terminée (test manuel) donne un résultat
+qui évolue ; un run planifié démarre après la fin de son intervalle.
+
+**Date** : 2026-10-06
