@@ -51,7 +51,9 @@ def run() -> None:
     client = bigquery.Client(project=PROJECT, location=LOCATION)
     for table, pk in TABLES.items():
         sql = DDL.format(project=PROJECT, staging=STAGING, raw=RAW, table=table, pk=pk)
-        client.query(sql).result()
+        client.query(
+            sql, job_config=bigquery.QueryJobConfig(labels={"composant": "dedup"})
+        ).result()
         print(f"  ~ vue {STAGING}.v_{table} (clé {pk})")
 
 

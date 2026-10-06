@@ -32,6 +32,7 @@ def query(sql: str, dry_run: bool = False):
     """
     client = get_client()
     job_config = bigquery.QueryJobConfig(
+        labels={"composant": "ingestion"},
         dry_run=dry_run,
         use_query_cache=not dry_run,
         maximum_bytes_billed=MAX_BYTES,

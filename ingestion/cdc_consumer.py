@@ -117,7 +117,9 @@ def vider(client, consumer, tampon, a_commiter, tombstones, crash: bool) -> None
             continue
         for ligne in lignes:
             ligne["_ingested_at"] = ingested_at
-        config = bigquery.LoadJobConfig(schema=SCHEMA, write_disposition="WRITE_APPEND")
+        config = bigquery.LoadJobConfig(
+            labels={"composant": "cdc"}, schema=SCHEMA, write_disposition="WRITE_APPEND"
+        )
         client.load_table_from_json(
             lignes, f"{PROJECT_ID}.{DATASET}.{table}_cdc", job_config=config
         ).result()

@@ -100,6 +100,7 @@ def charger(
     """Joue le load job. `destination` porte le décorateur de partition en
     régime normal, la table nue à l'amorçage."""
     config = bigquery.LoadJobConfig(
+        labels={"composant": "ingestion"},
         source_format=bigquery.SourceFormat.PARQUET,
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
     )
