@@ -94,7 +94,8 @@ def construire_evenement(context, evenement: str) -> dict:
 
 def ecrire(evenement: dict) -> None:
     ligne = json.dumps(evenement, ensure_ascii=False, default=str)
-    niveau = logging.ERROR if evenement["evenement"] == "echec" else logging.WARNING
+    niveaux = {"echec": logging.ERROR, "relance": logging.WARNING, "succes": logging.INFO}
+    niveau = niveaux.get(evenement["evenement"], logging.WARNING)
     log.log(niveau, "PIPELINE_EVENT %s", ligne)
 
     chemin = fichier_evenements()
@@ -121,3 +122,8 @@ def sur_relance(context) -> None:
 def sur_echec(context) -> None:
     """on_failure_callback : relances épuisées, ou AirflowFailException."""
     _proteger(context, "echec")
+
+
+def sur_succes(context) -> None:
+    """on_success_callback : sert de référence pour les durées normales."""
+    _proteger(context, "succes")

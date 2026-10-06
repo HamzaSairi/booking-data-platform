@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from commun.callbacks import classer, sur_echec, sur_relance
+from commun.callbacks import classer, fichier_evenements, sur_echec, sur_relance, sur_succes
 
 
 def exception(nom: str, message: str) -> Exception:
@@ -101,3 +101,15 @@ def test_le_callback_ne_leve_jamais(ctx, tmp_path, monkeypatch, caplog):
 
     # ... mais l'échec du callback doit rester visible dans les logs.
     assert "événement perdu" in caplog.text
+
+
+def test_sur_succes_ecrit_un_evenement_succes(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIRFLOW_HOME", str(tmp_path))
+    sur_succes({})
+    lignes = fichier_evenements().read_text(encoding="utf-8").splitlines()
+    assert json.loads(lignes[-1])["evenement"] == "succes"
+
+
+def test_sur_succes_ne_leve_jamais():
+    # Contexte invalide : l'événement est perdu, jamais la tâche.
+    sur_succes(None)

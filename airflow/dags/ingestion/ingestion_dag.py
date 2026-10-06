@@ -16,7 +16,7 @@ import pendulum
 from airflow.sdk import dag, get_current_context, task, task_group
 from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
 from airflow.timetables.interval import CronDataIntervalTimetable
-from commun.callbacks import sur_echec, sur_relance
+from commun.callbacks import sur_echec, sur_relance, sur_succes
 
 # Clé primaire de chaque table, utilisée par les contrôles de validation.
 CLES = {
@@ -45,10 +45,13 @@ DEFAUTS = {
     "retry_delay": timedelta(seconds=30),
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=2),
-    # Journal JSONL des incidents, voir docs/runbook.md. Via default_args,
-    # s'applique aux douze tâches sans les toucher une à une.
+    # Journal JSONL des événements de tâche, voir docs/runbook.md. Via
+    # default_args, s'applique aux douze tâches sans les toucher une à une.
+    # Les succès donnent la durée de référence : sans eux, impossible de
+    # repérer une tâche anormalement lente (jour 28, pipeline_metrics).
     "on_retry_callback": sur_relance,
     "on_failure_callback": sur_echec,
+    "on_success_callback": sur_succes,
 }
 
 
