@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from commun.callbacks import classer, fichier_evenements, sur_echec, sur_relance, sur_succes
 
 

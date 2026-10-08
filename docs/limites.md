@@ -24,3 +24,21 @@
 - L'historique SCD2 ne se reconstruit pas depuis le seed.
 - En production : compte de facturation, aucune expiration sur raw et
   snapshots, expiration explicite uniquement sur les tables temporaires.
+
+## Le SCD2 n'est durable que tant que la raw l'est (jour 29)
+`dim_customers` (914 versions, 511 clients) est reconstruite par dbt depuis la
+raw. Les partitions de `raw_booking.customers` expirent à partir du 30/10/2026
+(bac à sable, 60 jours) : tout `dbt run` postérieur perd les versions les plus
+anciennes, sans erreur. Copie locale : `data/backup/dim_customers_2026-10-07.parquet`.
+En production : sortir du bac à sable, ou matérialiser l'historique en snapshot
+dbt, qui conserve ses lignes même si la source les perd.
+Biais connu : 49 % des réservations ont un niveau différent de l'actuel, bien
+au-delà d'un programme réel, car le simulateur change les niveaux au hasard.
+
+## Remboursements jamais exercés (jour 29)
+Aucune réservation annulée n'a de paiement (379 annulées, 0 € encaissé) : le
+simulateur annule avant paiement. Le cas « payé puis annulé » (remboursement,
+statut `refunded`) n'est ni généré ni testé ; le modèle le compterait comme
+encaissé sur une réservation annulée.
+Le taux d'encaissement (94,7 %) est un solde net : 29 réservations surpayées
+compensent une partie des impayés. Le dashboard affiche les deux séparément.

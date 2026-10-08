@@ -16,6 +16,7 @@ import pendulum
 from airflow.sdk import dag, get_current_context, task, task_group
 from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
 from airflow.timetables.interval import CronDataIntervalTimetable
+
 from commun.callbacks import sur_echec, sur_relance, sur_succes
 
 # Clé primaire de chaque table, utilisée par les contrôles de validation.
@@ -87,7 +88,7 @@ def fenetre(ctx) -> tuple:
     # corrompent plus. On reste à 1 pour ménager Postgres et les quotas
     # de load jobs pendant un backfill : c'est une limite de débit,
     # plus une limite de correction. Contrepartie constatée : un seul run
-    # malade paralyse le DAG entier (ADR-014).
+    # malade paralyse le DAG entier (ADR-021).
     max_active_runs=1,
     default_args=DEFAUTS,
     tags=["ingestion", "batch"],

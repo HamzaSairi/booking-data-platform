@@ -2,7 +2,7 @@
 
 Idempotent : la partition du jour est remplacée (WRITE_TRUNCATE), jamais
 complétée. Load job et non insert_rows_json : le sandbox BigQuery refuse
-le streaming (ADR-012).
+le streaming (ADR-045).
 """
 
 from __future__ import annotations

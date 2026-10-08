@@ -4,6 +4,36 @@ Format : contexte → options → décision → raison (avec son coût) → date
 
 ---
 
+## Index
+
+Les ADR ne sont jamais réécrites : une décision révisée l'est par une nouvelle
+entrée (ADR-028 révise ADR-022). Les ADR-042 à 049 (jours 26–27) avaient été
+numérotées 009 à 016 par erreur ; renumérotées le 2026-10-08, renvois corrigés.
+
+### À lire en premier
+
+| ADR | Décision | Pourquoi elle compte |
+|---|---|---|
+| 014 | CDC par log, adopté après mesure des limites du batch | la technologie choisie après un constat chiffré (21 transitions perdues sur 209) |
+| 020 | Idempotence par écrasement de partition | rejouer N fois = rejouer 1 fois |
+| 028 | Calendrier à intervalles de données | une décision révisée (022), et pourquoi |
+| 033 | `fct_bookings` clusterisée, non partitionnée | une optimisation écartée sous contrainte |
+| 034 | SCD2 reconstruit depuis la raw | le cœur de la démonstration, et sa limite |
+| 038 | At-least-once, dédoublonnage en aval | 0 perte, 1 000 doublons absorbés après plantage |
+| 039 | `fct_bookings` alimenté par le CDC | 0 écart de réconciliation, contre 17 fantômes en batch |
+| 041 | Rester en bac à sable malgré l'expiration | une contrainte assumée, datée, documentée |
+
+### Par sprint
+
+| Sprint | ADR |
+|---|---|
+| 1 — Socle et source | 001–005 |
+| 2 — Ingestion batch | 006–014 |
+| 3 — Orchestration | 015–029 |
+| 4 — Modélisation et qualité | 030–036 |
+| 5 — CDC | 037–039 |
+| 6 — DataOps et vitrine | 040–050 |
+
 ## ADR-001 — Docker Compose plutôt qu'une installation locale
 
 **Contexte** : le projet a besoin d'une base Postgres, puis plus tard d'Airflow,
@@ -1466,7 +1496,7 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 
 **Date** : 2026-10-03
 
-## ADR-009 — Importer l'infrastructure existante plutôt que la recréer
+## ADR-042 — Importer l'infrastructure existante plutôt que la recréer
 **Contexte** : les datasets et le service account ont été créés à la main au jour 6. Terraform arrive au jour 26.
 **Options** : (a) détruire et laisser Terraform recréer, (b) importer avec des blocs `import`.
 **Décision** : import.
@@ -1474,21 +1504,21 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 **Incident** : l'import du SA a d'abord échoué (« Cannot import non-existent remote object ») alors que le SA existait. Cause retenue : non isolée — API IAM activée et ID d'import passé au format email dans le même essai ; l'une des deux corrections a débloqué l'import, sans que je puisse dire laquelle. Leçon : une seule modification à la fois en débogage..
 **Date** : 2026-10-04
 
-## ADR-010 — State Terraform local
+## ADR-043 — State Terraform local
 **Contexte** : Terraform doit mémoriser ce qu'il gère.
 **Options** : (a) state local gitignoré, (b) bucket GCS versionné avec verrouillage, (c) HCP Terraform.
 **Décision** : state local.
 **Raison** : projet solo, un seul poste. Coût : impossible de lancer `terraform plan` en CI (voir ADR-013), et aucune protection contre deux `apply` concurrents. En équipe, (b) serait obligatoire — mais GCS exige la facturation (voir ADR-012).
 **Date** : 2026-10-04
 
-## ADR-011 — IAM additif, au niveau dataset, et clé SA hors Terraform
+## ADR-044 — IAM additif, au niveau dataset, et clé SA hors Terraform
 **Contexte** : accorder au SA les droits strictement nécessaires.
 **Options** : `iam_policy` / `iam_binding` (autoritaires) vs `iam_member` (additif) ; droits au niveau projet vs dataset ; clé générée par Terraform ou non.
 **Décision** : `google_bigquery_dataset_iam_member` (dataEditor par dataset) + `google_project_iam_member` (jobUser, qui n'existe qu'au niveau projet). Pas de `google_service_account_key`. Pas de bloc `access {}` dans les datasets.
 **Raison** : les ressources autoritaires écrasent tout ce qui n'est pas dans le code, y compris mes propres droits. Une clé générée par Terraform finirait en clair dans le state. Le bloc `access {}` entrerait en conflit avec les `iam_member`.
 **Date** : 2026-10-04
 
-## ADR-012 — Rester en BigQuery sandbox
+## ADR-045 — Rester en BigQuery sandbox
 **Contexte** : le premier `apply` a échoué sur `billingNotEnabled`. Le projet tournait en sandbox depuis le jour 6 sans que je le sache : chaque table expire 60 jours après sa création. L'alerte budget du jour 6 ne pouvait d'ailleurs pas fonctionner sans compte de facturation.
 **Options** : (a) activer la facturation (le free tier reste gratuit), (b) aligner le code sur la contrainte du sandbox.
 **Décision** : (b), avec l'expiration exposée dans une variable `bq_sandbox_expiration_ms`.
@@ -1498,7 +1528,7 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 **Réversibilité** : lier un compte de facturation, passer la variable à `null`, retirer l'expiration des tables existantes (`bq update --expiration 0`).
 **Date** : 2026-10-04
 
-## ADR-013 — Pas de `terraform plan` en CI
+## ADR-046 — Pas de `terraform plan` en CI
 **Contexte** : le plan du jour 27 prévoyait `terraform plan` dans GitHub Actions.
 **Options** : (a) plan en CI avec backend distant, (b) `fmt -check` + `validate` uniquement.
 **Décision** : (b).
@@ -1506,21 +1536,21 @@ SCD2 construit à partir des événements (`valid_from = source_ts`), au lieu de
 **En production** : backend GCS, identité CI dédiée en lecture, plan commenté automatiquement sur chaque PR.
 **Date** : 2026-10-05
 
-## ADR-014 — Clé de service account en secret GitHub
+## ADR-047 — Clé de service account en secret GitHub
 **Contexte** : le job dbt doit s'authentifier auprès de BigQuery.
 **Options** : (a) clé JSON encodée en base64 dans un secret, (b) Workload Identity Federation.
 **Décision** : (a).
 **Raison** : simplicité de mise en place pour un projet personnel. Limite assumée : une clé longue durée reste valide jusqu'à révocation si elle fuit. WIF supprime toute clé : GitHub obtient un jeton temporaire (~1 h) échangé auprès de Google. C'est la cible pour la production.
 **Date** : 2026-10-05
 
-## ADR-015 — Tests BigQuery exclus du CI
+## ADR-048 — Tests BigQuery exclus du CI
 **Contexte** : `test_idempotence.py` et `test_reconciliation_cdc.py` exécutent le vrai pipeline contre BigQuery.
 **Options** : (a) les lancer en CI, (b) les exclure via le marqueur `bigquery` (`pytest -m "not bigquery"`).
 **Décision** : (b). Le CI lance les tests unitaires et les tests sur un Postgres démarré dans le runner via `docker compose up -d postgres`.
 **Raison** : coût, quotas du sandbox, durée, et déterminisme (un test qui dépend d'un service distant peut échouer pour une raison étrangère au code). Contrepartie : ces tests doivent être lancés à la main avant chaque démo — et ils sont actuellement rouges (voir JOURNAL, jour 27).
 **Date** : 2026-10-05
 
-## ADR-016 — Figer l'environnement du CI
+## ADR-049 — Figer l'environnement du CI
 **Contexte** : GitHub a annoncé la migration de `ubuntu-latest` vers Ubuntu 26 le 19 octobre 2026.
 **Décision** : `runs-on: ubuntu-24.04` (identique à mon WSL), Python 3.12 explicite, dépendances figées dans `requirements.txt`.
 **Raison** : sans cela, le CI aurait changé de système dans deux semaines sans aucun commit de ma part. Un CI non reproductible ne prouve rien. Contrepartie : mettre à jour volontairement l'image et les actions (Node.js 20 déprécié sur checkout@v4, setup-python@v5, setup-terraform@v3).
@@ -1600,3 +1630,21 @@ après la perte ; la requête 4 de `sql/checks/pipeline_sante.sql` la signale
 **En production** : option (a), sans discussion.
 
 **Date** : 2026-10-06
+
+## ADR-050 — Dashboard : une vue dédiée, identifiants du propriétaire
+**Contexte** : exposer les marts à Looker Studio pour les 5 questions US-29
+(docs/dashboard.md).
+**Options** : (a) brancher l'outil sur fct/dim ; (b) une vue dédiée
+`rpt_bookings_dashboard` ; identifiants : (1) propriétaire, (2) compte de service.
+**Décision** : (b) + (1).
+**Raison** : la vue est le contrat entre le modèle et la BI. Elle fige les
+jointures, dont la jointure SCD2 (une jointure faite dans l'outil de BI ne serait
+ni versionnée ni testée), et n'expose aucune donnée personnelle (ni nom, ni email).
+Le test `unique(booking_id)` garde contre une duplication par double version
+courante. Identifiants du propriétaire : un compte de service exige de déléguer
+l'accès à l'agent de service de Looker Studio, une configuration lourde pour un
+projet personnel.
+**Coût** : le rapport dépend de mon compte personnel ; en production, compte de
+service dédié en lecture seule sur `marts`. Cache réglé à 12 h, pour un
+pipeline quotidien.
+**Date** : 2026-10-07

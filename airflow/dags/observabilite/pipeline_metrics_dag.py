@@ -17,6 +17,7 @@ import pendulum
 from airflow.sdk import dag, get_current_context, task
 from airflow.sdk.exceptions import AirflowFailException
 from airflow.timetables.interval import CronDataIntervalTimetable
+
 from commun.callbacks import sur_echec, sur_relance
 
 FENETRE = timedelta(days=1)

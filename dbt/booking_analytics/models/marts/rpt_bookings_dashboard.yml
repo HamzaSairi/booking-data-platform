@@ -1,0 +1,15 @@
+version: 2
+models:
+  - name: rpt_bookings_dashboard
+    description: "Vue exposée à Looker Studio (US-29). Grain : une réservation."
+    columns:
+      - name: booking_id
+        tests: [unique, not_null]   # unique attrape un client avec deux versions is_current
+      - name: tier_at_booking
+        tests:
+          - not_null
+          - accepted_values: {values: ['standard', 'silver', 'gold']}
+      - name: tier_current
+        tests: [not_null]
+      - name: year_month
+        tests: [not_null]           # échoue si dim_dates ne couvre pas une date

@@ -1352,7 +1352,7 @@ hypothèse par une requête avant de corriger.
 **Ce qui a coincé**
 - `terraform` absent : installé via le dépôt apt HashiCorp (snap fonctionne mal sous WSL).
 - Import du SA refusé alors qu'il existait. Résolu après passage de l'ID au format email et alignement du `display_name`. Cause exacte : non isolée — API IAM activée et ID passé au format email dans le même essai.
-- Premier `apply` partiel : `job_user` créé, mise à jour des 3 datasets refusée (`billingNotEnabled`). **Découverte : le projet est en sandbox depuis le jour 6**, avec expiration des tables à 60 jours. Je ne l'avais jamais vu. → ADR-012.
+- Premier `apply` partiel : `job_user` créé, mise à jour des 3 datasets refusée (`billingNotEnabled`). **Découverte : le projet est en sandbox depuis le jour 6**, avec expiration des tables à 60 jours. Je ne l'avais jamais vu. → ADR-045.
 - `dbt: command not found` : venv non activé dans le nouveau terminal. Réinstallation de dbt-core 1.12.5 / dbt-bigquery 1.12.1 ; pip a rétrogradé protobuf 7.36.1 → 6.33.6 (vérifié avec `pip check`).
 - **Écart à la règle « commiter tous les jours »** : aucun commit le jour 26. Le code Terraform est entré dans Git au jour 27 via un git add . qui a aussi embarqué terraform.tfvars. Leçon : commit en fin de séance, git status relu avant tout git add.
 
@@ -1373,7 +1373,7 @@ hypothèse par une requête avant de corriger.
 6. **Compose interprète tout le fichier** : `up -d postgres` échouait sur les variables obligatoires d'Airflow (`FERNET_KEY`, `POSTGRES_PASSWORD`, `GCP_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`). Mes propres garde-fous `${VAR:?...}` ont fait leur travail ; le CI les reçoit maintenant via `env`.
 7. **dbt** : `env_var('BQ_DATASET_STAGING')` non fourni (exit 2) → 5 variables `BQ_*` passées au job.
 8. **`terraform fmt`** : exit 3 sur `main.tf` non formaté.
-9. **`ubuntu-latest`** allait passer à Ubuntu 26 dans deux semaines → figé sur 24.04 (ADR-016).
+9. **`ubuntu-latest`** allait passer à Ubuntu 26 dans deux semaines → figé sur 24.04 (ADR-049).
 10. **`terraform.tfvars` était commité** (repéré par pre-commit, qui ne traite que les fichiers suivis). Retiré avec `git rm --cached`. Ne contient que l'ID projet, mais le `.gitignore` ne couvrait pas les `tfvars`.
 
 **Erreur de méthode** : premier test d'échec raté — branche supprimée juste après le push, avant d'ouvrir la PR. Le workflow ne se déclenche que sur push vers `main` et sur PR : aucun run n'avait eu lieu.
@@ -1419,3 +1419,33 @@ par table (hotels 98 %, payments 52 %, bookings 42 %, customers 15 %).
 Décision : rester en sandbox, échéance documentée (ADR). Requête de détection
 à J−7 ajoutée. Jours 29–30 à terminer avant le 30 octobre.
 - Jour 28 : tables *_avant_reconstruction (sauvegardes du jour 17) supprimées.
+
+## Jour 29 — Dashboard
+- US-29 enfin écrite (docs/dashboard.md) ; vue rpt_bookings_dashboard, 6 tests verts.
+- **Erreur de définition** : « CA confirmé » ignorait le statut `completed`
+  (1,66 M€ de séjours réalisés). Le contrôle croisé Python / Looker Studio
+  concordait, parce que les deux appliquaient le même filtre erroné : un
+  contrôle croisé vérifie le calcul, pas la définition. C'est la répartition par
+  statut qui a révélé l'erreur.
+- Q4 (SCD2) : sur la version actuelle du client, gold reçoit 2,4 fois son vrai CA
+  (+136 %) et standard en perd 69 %, à total identique. 49 % des réservations ont
+  changé de niveau (biais du simulateur, voir docs/limites.md).
+- Q5 : encaissement de 94,7 %, mais c'est un solde net (29 surpayées compensent
+  des impayés) ; 31 séjours terminés non payés ; 9 orphelins (4 283 €).
+- Pièges Looker Studio : période par défaut sur 28 jours, filtrage croisé au clic,
+  source du dernier graphique ajouté reprise par défaut.
+- Données arrêtées au 03/10 : vérifier la fraîcheur avant la vidéo du jour 30.
+
+## Jour 30 — Vitrine
+- CI rouge depuis le commit feat(obs) du jour 28, sans que je le remarque pendant
+  deux jours : 3 erreurs de lint et 1 fichier non formaté. pre-commit ne contrôle
+  que les fichiers indexés ; le CI contrôle tout le dépôt.
+- Une tentative de réparation d'hier, jamais commitée, avait cassé la syntaxe de
+  sql/checks/reconciliation_raw.py. Abandonnée (git checkout), correction refaite
+  depuis HEAD avec ruff --fix et ruff format.
+- pre-commit met de côté les modifications non indexées puis les restaure : des
+  fichiers non concernés changent d'horodatage. L'heure de modification n'est pas
+  un indice fiable.
+- ADR : compteur reparti à 009 aux jours 26–27 (8 doublons), et l'ADR du jour 29
+  numérotée « 34 » car bash lit `$((041 + 1))` en octal (041₈ = 33). Seconde
+  série renumérotée 042–049, dashboard 050, renvois corrigés, index ajouté.
