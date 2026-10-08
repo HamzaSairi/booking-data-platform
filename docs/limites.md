@@ -53,6 +53,12 @@ référence entre parenthèses renvoie à l'ADR ou au document qui le détaille.
   acceptable à 60 Ko. → Rotation quotidienne ou collecteur de logs. Ses
   partitions expirent elles aussi à 60 jours : deux mois d'historique de durées.
 
+- **La fraîcheur métier confond source calme et pipeline arrêté** (jour 30).
+  Le test regarde la dernière fenêtre contenant des changements : après cinq
+  jours sans activité en source, il était en erreur alors que chaque run
+  quotidien avait réussi. → Mesurer séparément la fraîcheur du pipeline (dernier
+  run réussi, `pipeline_metrics`) et celle des données.
+
 ### Couverture fonctionnelle
 
 - **Remboursements jamais exercés** (jour 29). Aucune réservation annulée n'a

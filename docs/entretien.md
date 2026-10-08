@@ -60,6 +60,11 @@ Ce que j'ai appris à mes dépens : mon CI est resté rouge deux jours sans que
 je le voie, et un scheduler arrêté ne déclenche aucun callback. Une détection
 qu'il faut lancer à la main n'est pas une alerte.
 
+Dernière leçon : ma fraîcheur « métier » était rouge alors que tous les runs
+réussissaient, parce que la source n'avait pas bougé depuis cinq jours. Un test
+de fraîcheur des données ne distingue pas une source calme d'un pipeline
+arrêté : il faut les deux mesures.
+
 **Preuves** : `dbt/booking_analytics/tests/assert_volume_plancher.sql`,
 `airflow/dags/observabilite/`, `docs/runbook.md`, ADR-040.
 

@@ -16,4 +16,5 @@ sources:
       - name: bookings_cdc
       - name: customers_cdc
       - name: hotels_cdc
+        freshness: null   # table quasi statique : erreur permanente sinon (cf. _sources.yml)
       - name: payments_cdc

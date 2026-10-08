@@ -1449,3 +1449,7 @@ Décision : rester en sandbox, échéance documentée (ADR). Requête de détect
 - ADR : compteur reparti à 009 aux jours 26–27 (8 doublons), et l'ADR du jour 29
   numérotée « 34 » car bash lit `$((041 + 1))` en octal (041₈ = 33). Seconde
   série renumérotée 042–049, dashboard 050, renvois corrigés, index ajouté.
+- Fraîcheur rouge partout alors que le batch tournait en succès : les fenêtres
+  du 04 au 07/10 étaient vides (simulateur arrêté). La fraîcheur métier mesure
+  la dernière donnée, pas la santé du pipeline. hotels_cdc passe à freshness:
+  null, comme hotels. Vidéo reportée au 09/10, après le run de minuit.
