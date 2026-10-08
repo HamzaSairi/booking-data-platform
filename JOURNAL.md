@@ -1453,3 +1453,22 @@ Décision : rester en sandbox, échéance documentée (ADR). Requête de détect
   du 04 au 07/10 étaient vides (simulateur arrêté). La fraîcheur métier mesure
   la dernière donnée, pas la santé du pipeline. hotels_cdc passe à freshness:
   null, comme hotels. Vidéo reportée au 09/10, après le run de minuit.
+- Consommateur CDC arrêté depuis le 03/10 sans que rien ne le signale : groupe
+  vide, 359 messages en attente, aucune perte. Relancé, lot écrit à 11:14 (lag
+  359 → 0 d'un coup : l'offset n'est commité qu'après l'écriture).
+- Vidéo finalement abandonnée : le README et docs/ portent les démonstrations.
+
+## Rétrospective du projet
+
+**Ce qui a marché.** Mesurer avant de choisir : le CDC est arrivé après le
+constat chiffré des limites du batch, et c'est ce qui rend le projet défendable.
+Écrire les ADR au moment de la décision, hésitations comprises.
+
+**Le fil rouge, découvert à la fin.** Les pires défauts du projet sont des
+échecs silencieux : réservations fantômes, CI rouge deux jours, fraîcheur rouge
+sur une source simplement calme, consommateur arrêté cinq jours. Un composant
+qui s'arrête sans bruit est plus dangereux qu'un composant qui plante.
+
+**Ce que je ferais autrement.** Protéger la branche derrière le CI dès le
+jour 1. Superviser chaque processus long dès sa création. Sortir du bac à
+sable avant de construire de l'historique dessus.

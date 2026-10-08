@@ -35,7 +35,7 @@ Mesurés sur le projet, sur des données simulées (voir les
 | Le batch garde les lignes supprimées | **17 réservations fantômes** en batch ; **0 écart** sur 3 205 identifiants avec le CDC | [batch-vs-cdc](docs/batch-vs-cdc.md) |
 | Latence du CDC | 76 à 874 ms jusqu'au topic, puis micro-batch ≤ 5 min | [batch-vs-cdc](docs/batch-vs-cdc.md) |
 | Plantage du consommateur | **0 perte**, 1 000 doublons absorbés par le dédoublonnage dbt (at-least-once) | ADR-038 |
-| Historisation SCD2 | Sur la version actuelle du client, gold reçoit **+136 %** de son vrai CA et standard **−69 %**, à total identique | [dashboard](docs/dashboard.md) |
+| Historisation SCD2 | Sur la version actuelle du client, gold reçoit **+136 %** de son vrai CA et standard **−69 %**, à total identique (mesuré le 07/10) | [dashboard](docs/dashboard.md) |
 | Stockage colonnaire | **20,5 fois moins d'octets lus** (−95,1 %) | [optimisation](docs/optimisation-bigquery.md) |
 | Partitionnement | −77 % d'octets lus sur 7 jours, mais **0 % de gain facturé** (plancher de 10 Mo) et 32 % des lignes perdues à l'expiration du bac à sable → clustering seul | ADR-033 |
 | Qualité | **94 tests automatisés** : 63 tests dbt, 31 tests pytest | ADR-036 |

@@ -59,6 +59,12 @@ référence entre parenthèses renvoie à l'ADR ou au document qui le détaille.
   quotidien avait réussi. → Mesurer séparément la fraîcheur du pipeline (dernier
   run réussi, `pipeline_metrics`) et celle des données.
 
+- **Consommateur CDC non supervisé** (jour 30). Il tourne au premier plan,
+  dans un terminal : arrêté le 03/10, il est resté cinq jours à l'arrêt sans
+  aucune alerte, avec 359 messages en attente. Aucune perte, puisque les
+  offsets n'avaient pas été commités, mais aucun signal non plus. → Conteneur
+  avec redémarrage automatique, et alerte sur le lag du groupe de consommateurs.
+
 ### Couverture fonctionnelle
 
 - **Remboursements jamais exercés** (jour 29). Aucune réservation annulée n'a
